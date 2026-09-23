@@ -325,13 +325,16 @@ workflows:
             alias: install-java11-matrix
             parameters:
               java: ["11.0"]
-              version: ["2.12.0", "2.13.0", "2.14.0", "2.15.0", "2.16.0"]
+              version: ["2.12.0", "2.13.0", "2.14.0", "2.15.0"]
           caching: false
           filters: *filters
+      # 2.16.0's launcher claims Java 11, but its classes require Java 17.
       - install-docker:
-          name: install-docker-17.0-medium-2.16.1
-          java: "17.0"
-          version: "2.16.1"
+          matrix:
+            alias: install-java17-matrix
+            parameters:
+              java: ["17.0"]
+              version: ["2.16.0", "2.16.1"]
           caching: false
           filters: *filters
       # The oldest release whose launcher accepts modern Java versions.
@@ -375,7 +378,7 @@ workflows:
             - install-java-matrix
             - install-java8-matrix
             - install-java11-matrix
-            - install-docker-17.0-medium-2.16.1
+            - install-java17-matrix
             - install-docker-25.0-medium-2.7.0
             - install-daemon
             - install-custom-paths

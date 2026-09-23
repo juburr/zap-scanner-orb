@@ -73,6 +73,14 @@ sha512sums=(
     ["2.4.0"]="7b61ac7ebaf6bd98bfe647b4583da5e1d488b1eea093dd4174c45a0ad51268ce7d6f5ea10d3e3ac27aaa299bf94980e78cc6ccb538d186b96612764e1161fbb1"
 )
 
+# Releases whose zap.sh declares a lower minimum Java version than their
+# bytecode actually requires. ZAP 2.16.0's launcher says Java 11, but its
+# classes are compiled for Java 17 and fail to load on anything older.
+declare -A min_java_overrides
+min_java_overrides=(
+    ["2.16.0"]="17"
+)
+
 # Succeeds if semver $1 sorts strictly before semver $2.
 version_lt() {
     [[ "$1" != "$2" ]] && [[ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n 1)" == "$1" ]]
@@ -314,6 +322,10 @@ fi
 # with this ZAP release, so the failure is reported here rather than on the
 # first scan.
 MIN_JAVA=$(grep -oE 'minimum of Java [0-9]+' "${ZAP_SH}" | awk '{ print $4 }' | head -n 1 || true)
+OVERRIDE_JAVA="${min_java_overrides[${VERSION}]:-}"
+if [[ -n "${OVERRIDE_JAVA}" ]] && [[ "${OVERRIDE_JAVA}" -gt "${MIN_JAVA:-0}" ]]; then
+    MIN_JAVA="${OVERRIDE_JAVA}"
+fi
 if [[ -n "${MIN_JAVA}" ]] && [[ "${JAVA_MAJOR_VERSION}" -lt "${MIN_JAVA}" ]]; then
     echo "ERROR: ZAP ${VERSION} requires Java ${MIN_JAVA} or newer, but found Java ${JAVA_VERSION}."
     exit 1

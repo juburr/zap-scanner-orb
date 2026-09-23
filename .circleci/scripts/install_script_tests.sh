@@ -16,7 +16,7 @@ set -uo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 SCRIPT="${REPO_ROOT}/src/scripts/install.sh"
 VERSION="2.17.0"
-ALT_VERSION="2.16.1"
+ALT_VERSION="2.16.0"
 # The smallest archived release, served only from zaproxy/zap-archive.
 LEGACY_VERSION="2.4.0"
 
@@ -437,10 +437,21 @@ if command -v wget &> /dev/null; then
     check "verified" output_has "Checksum verification passed!"
     check "warned that the release is unsupported" output_has "ZAP ${ALT_VERSION} is not the latest release"
     check "installed ${ALT_VERSION}" test -f "${WORK}/wget/zap/zap-${ALT_VERSION}.jar"
-    rm -rf "${WORK}/wget-dl"
 else
     echo "    skipped: wget is not available"
 fi
+end
+
+# Reuses the archive downloaded above, if any.
+begin "enforces the real Java minimum when the launcher understates it"
+make_fake_java "${WORK}/java11-path" 'openjdk version "11.0.22" 2024-01-16'
+run_install PATH="${WORK}/java11-path/bin:${PATH}" ZAP_ORB_DOWNLOAD_DIR="${WORK}/wget-dl" PARAM_VERSION="2.16.0" \
+    PARAM_INSTALL_PATH="${WORK}/override/zap" PARAM_BIN_PATH="${WORK}/override/bin"
+check "exit code is non-zero" rc_is_nonzero
+check "required Java 17 despite the launcher declaring 11" output_has "ZAP 2.16.0 requires Java 17 or newer, but found Java 11.0.22"
+check "nothing installed" test ! -e "${WORK}/override/zap"
+check "no staging directories left" no_staging_dirs "${WORK}/override"
+rm -rf "${WORK}/wget-dl"
 end
 
 # ---------------------------------------------------------------------------
