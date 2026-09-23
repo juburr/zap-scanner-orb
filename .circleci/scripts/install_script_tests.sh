@@ -16,7 +16,7 @@ set -uo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 SCRIPT="${REPO_ROOT}/src/scripts/install.sh"
 VERSION="2.17.0"
-ALT_VERSION="2.16.1"
+ALT_VERSION="2.16.0"
 # The smallest archived release, served only from zaproxy/zap-archive.
 LEGACY_VERSION="2.4.0"
 
@@ -131,7 +131,7 @@ make_fake_java() {
 make_script_without_checksum() {
     local version=$1
     local dest=$2
-    sed "/\[\"${version//./\\.}\"\]=/d" "${SCRIPT}" > "${dest}"
+    sed "/\[\"${version//./\\.}\"\]=\"[0-9a-f]\{128\}\"/d" "${SCRIPT}" > "${dest}"
     ! grep -q "\[\"${version}\"\]=" "${dest}"
 }
 
@@ -318,7 +318,7 @@ end
 
 begin "tampered archive fails verification when it is freshly downloaded"
 # Simulate a bad upstream by pointing the table at the wrong checksum.
-sed "s/\[\"${VERSION//./\\.}\"\]=\"[0-9a-f]*\"/[\"${VERSION}\"]=\"$(printf '0%.0s' {1..128})\"/" "${SCRIPT}" > "${WORK}/install_bad_checksum.sh"
+sed "s/\[\"${VERSION//./\\.}\"\]=\"[0-9a-f]\{128\}\"/[\"${VERSION}\"]=\"$(printf '0%.0s' {1..128})\"/" "${SCRIPT}" > "${WORK}/install_bad_checksum.sh"
 mkdir -p "${WORK}/badsum-dl"
 cp "${CACHE}/zap.tar.gz" "${WORK}/badsum-dl/zap.tar.gz"
 INSTALL_SCRIPT="${WORK}/install_bad_checksum.sh" run_install ZAP_ORB_DOWNLOAD_DIR="${WORK}/badsum-dl" \
@@ -437,10 +437,21 @@ if command -v wget &> /dev/null; then
     check "verified" output_has "Checksum verification passed!"
     check "warned that the release is unsupported" output_has "ZAP ${ALT_VERSION} is not the latest release"
     check "installed ${ALT_VERSION}" test -f "${WORK}/wget/zap/zap-${ALT_VERSION}.jar"
-    rm -rf "${WORK}/wget-dl"
 else
     echo "    skipped: wget is not available"
 fi
+end
+
+# Reuses the archive downloaded above, if any.
+begin "enforces the real Java minimum when the launcher understates it"
+make_fake_java "${WORK}/java11-path" 'openjdk version "11.0.22" 2024-01-16'
+run_install PATH="${WORK}/java11-path/bin:${PATH}" ZAP_ORB_DOWNLOAD_DIR="${WORK}/wget-dl" PARAM_VERSION="2.16.0" \
+    PARAM_INSTALL_PATH="${WORK}/override/zap" PARAM_BIN_PATH="${WORK}/override/bin"
+check "exit code is non-zero" rc_is_nonzero
+check "required Java 17 despite the launcher declaring 11" output_has "ZAP 2.16.0 requires Java 17 or newer, but found Java 11.0.22"
+check "nothing installed" test ! -e "${WORK}/override/zap"
+check "no staging directories left" no_staging_dirs "${WORK}/override"
+rm -rf "${WORK}/wget-dl"
 end
 
 # ---------------------------------------------------------------------------

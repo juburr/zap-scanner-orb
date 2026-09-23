@@ -44,8 +44,8 @@ Every ZAP release still hosted by the ZAP project can be installed with
 
 | ZAP version | Java | Executor example |
 |---|---|---|
-| 2.16.1 – 2.17.0 | 17 or newer | `cimg/openjdk:21.0` |
-| 2.12.0 – 2.16.0 | 11 or newer | `cimg/openjdk:21.0` |
+| 2.16.0 – 2.17.0 | 17 or newer | `cimg/openjdk:21.0` |
+| 2.12.0 – 2.15.0 | 11 or newer | `cimg/openjdk:21.0` |
 | 2.7.0 – 2.11.1 | 8 or newer | `cimg/openjdk:21.0` |
 | 2.4.0, 2.4.2, 2.4.3, 2.5.0 | 7 or 8 only | `cimg/openjdk:8.0` |
 
@@ -162,7 +162,12 @@ another official source, such as the `<linux>` entry in
 Then:
 
 1. Add the published checksum to `src/scripts/upstream_checksums.txt`.
-2. Add the version to a test matrix in `.circleci/test-deploy.yml`.
+2. Add the version to the test matrix for the oldest Java it supports in
+   `.circleci/test-deploy.yml`. Don't rely on the "minimum of Java" line in
+   `zap.sh` alone: ZAP 2.16.0's launcher declares Java 11 but its classes
+   require Java 17. Confirm with the class file version of
+   `org/zaproxy/zap/ZAP.class` in `zap-<version>.jar` (major version minus 44),
+   and add a `min_java_overrides` entry in `install.sh` if they disagree.
 3. When bumping the default `version`, move the previous default into the
    appropriate matrix.
 
