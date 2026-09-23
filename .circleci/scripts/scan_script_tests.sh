@@ -20,6 +20,8 @@ FIXTURES="${REPO_ROOT}/.circleci/zap"
 
 WORK=$(mktemp -d)
 trap 'rm -rf "${WORK}"' EXIT
+# Anything a regression writes to the working directory is cleaned up too.
+cd "${WORK}" || exit 1
 
 PASSED=0
 FAILED=0
