@@ -1,0 +1,34 @@
+env:
+  contexts:
+    - name: target
+      urls:
+        - ${ZAP_TARGET}
+  parameters:
+    failOnError: true
+    failOnWarning: false
+    progressToStdout: true
+jobs:
+  - type: passiveScan-config
+    parameters:
+      maxAlertsPerRule: 10
+  - type: openapi
+    parameters:
+      apiFile: ${ZAP_API_FILE}
+      targetUrl: ${ZAP_TARGET}
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 2
+  - type: report
+    parameters:
+      template: traditional-html
+      reportDir: ${ZAP_REPORT_DIR}
+      reportFile: report.html
+  - type: report
+    parameters:
+      template: traditional-json
+      reportDir: ${ZAP_REPORT_DIR}
+      reportFile: report.json
+  - type: exitStatus
+    parameters:
+      errorLevel: High
+      warnLevel: ${ZAP_WARN_LEVEL}

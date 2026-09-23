@@ -120,6 +120,56 @@ jobs:
           path: /tmp/zap-daemon.log
           destination: zap-daemon.log
 
+  scan-spike:
+    description: >
+      Prototype for the scan command. Runs Automation Framework plans with
+      zap.sh -autorun against a service container and asserts on exit codes
+      and reports.
+    docker:
+      - image: cimg/openjdk:21.0
+      - image: nginx:stable-alpine
+    environment:
+      ZAP_TARGET: http://localhost/
+      REPORT_ROOT: /tmp/zap-reports
+    steps:
+      - checkout
+      - zap-scanner-orb/install:
+          verify_checksums: strict
+      - run:
+          name: Wait for the target
+          command: |
+            for _ in $(seq 1 30); do
+              curl -fsS -o /dev/null "${ZAP_TARGET}" && exit 0
+              sleep 1
+            done
+            echo "Target never became reachable"
+            exit 1
+      - run:
+          name: Baseline scan that crosses the warn threshold
+          command: |
+            ZAP_WARN_LEVEL=Medium bash .circleci/scripts/scan_spike.sh baseline-warn .circleci/zap/baseline-plan.yaml 2 \
+              '"name": ?"Missing Anti-clickjacking Header"'
+      - run:
+          name: Baseline scan below the warn threshold
+          command: ZAP_WARN_LEVEL=High bash .circleci/scripts/scan_spike.sh baseline-pass .circleci/zap/baseline-plan.yaml 0
+      - run:
+          name: Baseline scan of an unreachable target
+          command: |
+            ZAP_WARN_LEVEL=High ZAP_TARGET=http://localhost:8999/ \
+              bash .circleci/scripts/scan_spike.sh unreachable .circleci/zap/baseline-plan.yaml 1
+      - run:
+          name: Full scan
+          command: ZAP_WARN_LEVEL=Medium bash .circleci/scripts/scan_spike.sh full .circleci/zap/full-plan.yaml 2
+      - run:
+          name: API scan from an OpenAPI definition
+          command: |
+            ZAP_WARN_LEVEL=Medium ZAP_API_FILE="${PWD}/.circleci/zap/openapi.json" \
+              bash .circleci/scripts/scan_spike.sh api .circleci/zap/api-plan.yaml 2 '/api/items'
+      - store_artifacts:
+          path: /tmp/zap-reports
+          destination: zap-reports
+          when: always
+
   install-custom-paths:
     description: >
       Installs into directories that contain spaces and are not on the PATH,
@@ -345,6 +395,8 @@ workflows:
           caching: false
           filters: *filters
       - install-daemon:
+          filters: *filters
+      - scan-spike:
           filters: *filters
       - install-custom-paths:
           filters: *filters
