@@ -120,12 +120,13 @@ DEAD_TARGET="http://127.0.0.1:9/"
 
 # run_scan [VAR=value ...] -- runs the scan script against the fake zap.sh with
 # a clean set of parameters, overridden by the given assignments. Sets RC and
-# OUTPUT. Pass PATH=... to use a different zap.sh.
+# OUTPUT. Pass PATH=... to use a different zap.sh. BASH_ENV is unset because
+# bash would otherwise source the PATH and ZAP_VERSION written by install.
 REPORTS="${WORK}/reports"
 run_scan() {
     rm -rf "${FAKE_STATE}" "${REPORTS}"
     mkdir -p "${WORK}/tmp"
-    OUTPUT=$(env -u ZAP_VERSION -u FAKE_RC -u FAKE_REPORT \
+    OUTPUT=$(env -u BASH_ENV -u ZAP_VERSION -u FAKE_RC -u FAKE_REPORT \
         PATH="${FAKE_BIN}:${PATH}" \
         TMPDIR="${WORK}/tmp" \
         FAKE_STATE="${FAKE_STATE}" \
