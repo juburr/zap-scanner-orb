@@ -1,0 +1,31 @@
+description: >
+  Import an OpenAPI definition from the repository and actively scan every operation it describes. Active scans
+  send attacks to the target, so only run them against applications you are authorized to test, such as one
+  started earlier in the same job.
+
+usage:
+  version: 2.1
+  orbs:
+    zap-scanner-orb: juburr/zap-scanner-orb@0
+  jobs:
+    api-dast:
+      docker:
+        - image: cimg/openjdk:21.0
+      steps:
+        - checkout
+        - zap-scanner-orb/install:
+            verify_checksums: strict
+        - run:
+            name: Start the API
+            command: ./scripts/start-api.sh
+            background: true
+        - zap-scanner-orb/scan:
+            scan_type: api
+            target: http://localhost:8080
+            api_definition: openapi.yaml
+            fail_on: high
+            active_scan_minutes: 20
+  workflows:
+    security:
+      jobs:
+        - api-dast

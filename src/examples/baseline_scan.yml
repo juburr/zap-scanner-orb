@@ -1,0 +1,24 @@
+description: >
+  Run a baseline scan against an application started as a service container. A baseline scan spiders the
+  application and reports passive scan alerts without attacking it, so it is safe to run on every commit. The job
+  fails if any alert is medium risk or higher, and the reports are stored as artifacts either way.
+
+usage:
+  version: 2.1
+  orbs:
+    zap-scanner-orb: juburr/zap-scanner-orb@0
+  jobs:
+    dast:
+      docker:
+        - image: cimg/openjdk:21.0
+        - image: bkimminich/juice-shop:latest
+      steps:
+        - zap-scanner-orb/install:
+            verify_checksums: strict
+        - zap-scanner-orb/scan:
+            target: http://localhost:3000
+            fail_on: medium
+  workflows:
+    security:
+      jobs:
+        - dast

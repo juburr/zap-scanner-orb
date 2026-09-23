@@ -1,0 +1,26 @@
+description: >
+  Run your own Automation Framework plan, for example one exported from the ZAP desktop app with authentication
+  configured. The plan can reference ${ZAP_TARGET} and ${ZAP_REPORT_DIR}, and should end with an exitStatus job
+  (ZAP 2.16.0 or newer) or otherwise fail on the conditions you care about.
+
+usage:
+  version: 2.1
+  orbs:
+    zap-scanner-orb: juburr/zap-scanner-orb@0
+  jobs:
+    dast:
+      docker:
+        - image: cimg/openjdk:21.0
+        - image: bkimminich/juice-shop:latest
+      steps:
+        - checkout
+        - zap-scanner-orb/install:
+            verify_checksums: strict
+        - zap-scanner-orb/scan:
+            plan: .zap/plan.yaml
+            target: http://localhost:3000
+            max_memory: 2g
+  workflows:
+    security:
+      jobs:
+        - dast
