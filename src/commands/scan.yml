@@ -58,7 +58,9 @@ parameters:
   report_dir:
     type: string
     default: /tmp/zap-reports
-    description: Absolute path of the directory to write reports, the plan, and the ZAP log into.
+    description: >
+      Absolute path of the directory to write reports, the plan, and the ZAP log into. Environment variables are not
+      expanded, since the path is also passed to store_artifacts.
   store_artifacts:
     type: boolean
     default: true
