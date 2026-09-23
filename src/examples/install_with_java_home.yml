@@ -1,0 +1,28 @@
+description: >
+  Install OWASP ZAP on an executor where Java is not on the PATH, such as a
+  machine executor with a JDK provisioned by an earlier step. From ZAP 2.17.0
+  onward, both the install command and zap.sh honor JAVA_HOME.
+
+usage:
+  version: 2.1
+  orbs:
+    zap-scanner-orb: juburr/zap-scanner-orb@1
+  jobs:
+    dast:
+      machine:
+        image: ubuntu-2404:current
+      steps:
+        - checkout
+        - run:
+            name: Point JAVA_HOME at a Java 17+ runtime
+            command: echo 'export JAVA_HOME=/opt/java/jdk-21' >> "$BASH_ENV"
+        - zap-scanner-orb/install:
+            install_path: $HOME/tools/zap
+            verify_checksums: strict
+        - run:
+            name: Log ZAP Version
+            command: zap.sh -cmd -version
+  workflows:
+    security:
+      jobs:
+        - dast

@@ -1,0 +1,25 @@
+description: >
+  Install OWASP ZAP with the `install` command, pinned to a specific version
+  with strict checksum verification. ZAP requires Java 17 or newer, so use an
+  executor that includes it.
+
+usage:
+  version: 2.1
+  orbs:
+    zap-scanner-orb: juburr/zap-scanner-orb@1
+  jobs:
+    dast:
+      docker:
+        - image: cimg/openjdk:21.0
+      steps:
+        - checkout
+        - zap-scanner-orb/install:
+            verify_checksums: strict
+            version: 2.17.0
+        - run:
+            name: Log ZAP Version
+            command: zap.sh -cmd -version
+  workflows:
+    security:
+      jobs:
+        - dast

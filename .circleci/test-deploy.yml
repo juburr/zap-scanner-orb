@@ -1,0 +1,389 @@
+version: 2.1
+orbs:
+  # Your orb will be automatically injected here during the pipeline.
+  # Reference your orb's jobs and commands below as they will exist when built.
+  orb-tools: circleci/orb-tools@12.3
+  # The orb definition is intentionally not included here. It will be injected into the pipeline.
+  zap-scanner-orb: {}
+
+# Use this tag to ensure test jobs always run,
+# even though the downstream publish job will only run on release tags.
+filters: &filters
+  tags:
+    only: /.*/
+
+# Filter for release tags.
+release-filters: &release-filters
+  branches:
+    ignore: /.*/
+  tags:
+    only: /^v[0-9]+\.[0-9]+\.[0-9]+$/
+
+commands:
+  verify-install:
+    description: >
+      Asserts that a completed zap-scanner-orb/install left a working ZAP on the
+      PATH. Path parameters are expanded by the shell, so $HOME may be used.
+    parameters:
+      version:
+        type: string
+        default: "2.17.0"
+      install_path:
+        type: string
+        default: "$HOME/zap"
+      bin_path:
+        type: string
+        default: "$HOME/bin"
+    steps:
+      - run:
+          name: Verify ZAP << parameters.version >> install
+          command: |
+            set -euo pipefail
+            expected_install="<< parameters.install_path >>"
+            expected_bin="<< parameters.bin_path >>"
+
+            echo "zap.sh: $(command -v zap.sh)"
+            test "$(command -v zap.sh)" = "${expected_bin}/zap.sh"
+            test "$(readlink "${expected_bin}/zap.sh")" = "${expected_install}/zap.sh"
+            test -x "${expected_install}/zap.sh"
+            test -f "${expected_install}/zap-<< parameters.version >>.jar"
+            grep -qx "version=<< parameters.version >>" "${expected_install}/.zap-scanner-orb"
+
+            test "${ZAP_INSTALL_PATH}" = "${expected_install}"
+            test "${ZAP_VERSION}" = "<< parameters.version >>"
+
+            # The cleanup step must remove the downloaded archive.
+            test ! -e /tmp/zap-orb-download
+
+            # Staging directories must never be left beside the install.
+            test -z "$(find "$(dirname "${expected_install}")" -maxdepth 1 -name '.zap-install.*')"
+
+            zap.sh -cmd -version | tee /tmp/zap-version.txt
+            test "$(tail -n 1 /tmp/zap-version.txt)" = "<< parameters.version >>"
+
+jobs:
+  install-docker:
+    description: Installs ZAP with the orb command on a cimg/openjdk image and verifies it runs.
+    parameters:
+      java:
+        type: string
+      resource_class:
+        type: string
+        default: medium
+      version:
+        type: string
+      caching:
+        type: boolean
+        default: true
+    docker:
+      - image: cimg/openjdk:<< parameters.java >>
+    resource_class: << parameters.resource_class >>
+    steps:
+      - zap-scanner-orb/install:
+          caching: << parameters.caching >>
+          verify_checksums: strict
+          version: << parameters.version >>
+      - verify-install:
+          version: << parameters.version >>
+
+  install-daemon:
+    description: >
+      Starts the installed ZAP as a headless daemon and queries its API, proving
+      the install is fully operational rather than just able to print a version.
+    docker:
+      - image: cimg/openjdk:21.0
+    steps:
+      - zap-scanner-orb/install:
+          verify_checksums: strict
+      - verify-install
+      - run:
+          name: Start ZAP daemon and query the API
+          command: |
+            set -euo pipefail
+            zap.sh -daemon -host 127.0.0.1 -port 8090 -config api.disablekey=true -Xmx1g > /tmp/zap-daemon.log 2>&1 &
+            zap_pid=$!
+            for _ in $(seq 1 90); do
+              if curl -fsS http://127.0.0.1:8090/JSON/core/view/version/ -o /tmp/zap-api-version.json; then
+                break
+              fi
+              if ! kill -0 "${zap_pid}" 2> /dev/null; then
+                echo "ZAP exited before its API became available"
+                exit 1
+              fi
+              sleep 2
+            done
+            cat /tmp/zap-api-version.json; echo
+            grep -q '"version":"2.17.0"' /tmp/zap-api-version.json
+            curl -fsS http://127.0.0.1:8090/JSON/core/action/shutdown/; echo
+            wait "${zap_pid}"
+      - store_artifacts:
+          path: /tmp/zap-daemon.log
+          destination: zap-daemon.log
+
+  install-custom-paths:
+    description: >
+      Installs into directories that contain spaces and are not on the PATH,
+      using environment variables in the paths and with caching disabled.
+    docker:
+      - image: cimg/openjdk:21.0
+    steps:
+      - zap-scanner-orb/install:
+          caching: false
+          install_path: $HOME/zap tools/zap
+          bin_path: $HOME/zap tools/bin
+          verify_checksums: strict
+      - verify-install:
+          install_path: $HOME/zap tools/zap
+          bin_path: $HOME/zap tools/bin
+
+  install-idempotent:
+    description: Invokes the install command twice in one job, which must succeed without reinstalling.
+    docker:
+      - image: cimg/openjdk:21.0
+    steps:
+      - zap-scanner-orb/install:
+          verify_checksums: strict
+      - run:
+          name: Record install state
+          command: stat -c '%i %Y' "${HOME}/zap/zap-2.17.0.jar" > /tmp/first-install.txt
+      - zap-scanner-orb/install:
+          verify_checksums: strict
+      - run:
+          name: Verify the second invocation did not reinstall
+          command: |
+            set -euo pipefail
+            diff /tmp/first-install.txt <(stat -c '%i %Y' "${HOME}/zap/zap-2.17.0.jar")
+            # BASH_ENV must remain valid after being appended to twice.
+            test "$(command -v zap.sh)" = "${HOME}/bin/zap.sh"
+      - verify-install
+
+  install-root-image:
+    description: >
+      Installs on a stock eclipse-temurin image, which runs as root, has no
+      /home/circleci, and may not ship the CircleCI CLI. Exercises the $HOME
+      defaults and the literal-value fallback for parameter expansion.
+    docker:
+      - image: eclipse-temurin:21-jre
+    steps:
+      - run:
+          name: Describe the environment
+          command: |
+            id
+            echo "HOME=${HOME}"
+            echo "JAVA_HOME=${JAVA_HOME:-}"
+            command -v circleci || echo "CircleCI CLI not present"
+      - zap-scanner-orb/install:
+          verify_checksums: strict
+      - verify-install:
+          install_path: /root/zap
+          bin_path: /root/bin
+      - run:
+          name: Verify files are owned by the installing user
+          command: test -z "$(find /root/zap ! -user root -print -quit)"
+
+  install-machine:
+    description: >
+      Installs on a machine executor with a Java runtime that is only reachable
+      through JAVA_HOME, verifying JAVA_HOME is honored.
+    parameters:
+      resource_class:
+        type: string
+    machine:
+      image: ubuntu-2404:current
+    resource_class: << parameters.resource_class >>
+    steps:
+      - run:
+          name: Download a Temurin 17 JRE into JAVA_HOME only
+          command: |
+            set -euo pipefail
+            case "$(uname -m)" in
+              x86_64) arch=x64 ;;
+              aarch64) arch=aarch64 ;;
+              *) echo "unsupported architecture $(uname -m)"; exit 1 ;;
+            esac
+            mkdir -p "${HOME}/temurin17"
+            curl -fsSL --retry 5 "https://api.adoptium.net/v3/binary/latest/17/ga/linux/${arch}/jre/hotspot/normal/eclipse" \
+              | tar -xz -C "${HOME}/temurin17" --strip-components=1
+            echo "export JAVA_HOME=\"${HOME}/temurin17\"" >> "${BASH_ENV}"
+      - zap-scanner-orb/install:
+          verify_checksums: strict
+      - verify-install
+
+  install-cache-roundtrip:
+    description: >
+      Verifies the archive saved by earlier installs is restored from the cache,
+      still matches the checksum table, and is used instead of downloading.
+    docker:
+      - image: cimg/openjdk:21.0
+    steps:
+      - checkout
+      - restore_cache:
+          key: zap-scanner-orb-v1-2.17.0
+      - run:
+          name: Verify the cached archive
+          command: |
+            set -euo pipefail
+            test -f /tmp/zap-orb-download/zap.tar.gz
+            expected=$(grep -oP '\["2\.17\.0"\]="\K[0-9a-f]{128}' src/scripts/install.sh)
+            test "$(sha512sum /tmp/zap-orb-download/zap.tar.gz | awk '{ print $1 }')" = "${expected}"
+      - run:
+          name: Install from the cached archive
+          command: |
+            set -euo pipefail
+            PARAM_INSTALL_PATH="${HOME}/zap" \
+            PARAM_BIN_PATH="${HOME}/bin" \
+            PARAM_VERIFY_CHECKSUMS=strict \
+            PARAM_VERSION=2.17.0 \
+            ZAP_ORB_DOWNLOAD_DIR=/tmp/zap-orb-download \
+            bash src/scripts/install.sh | tee /tmp/install.log
+            grep -q "Using cached ZAP 2.17.0 archive." /tmp/install.log
+            if grep -q "Downloading" /tmp/install.log; then
+              echo "expected the cached archive to be used"
+              exit 1
+            fi
+            rm -rf /tmp/zap-orb-download
+      - verify-install
+
+  install-script-tests:
+    description: >
+      Runs the install script directly against failure and edge cases that
+      can't be asserted through the orb command: malformed input, missing
+      tools, old or unparseable Java, cache corruption, and more.
+    docker:
+      - image: cimg/openjdk:21.0
+    steps:
+      - checkout
+      - restore_cache:
+          key: zap-scanner-orb-v1-2.17.0
+      - run:
+          name: Run install script tests
+          command: SEED_ARCHIVE=/tmp/zap-orb-download/zap.tar.gz bash .circleci/scripts/install_script_tests.sh
+
+  checksum-table:
+    description: >
+      Re-derives every entry in the checksum table from the checksums the ZAP
+      project published (recorded in upstream_checksums.txt), and ensures the
+      default version and every test matrix entry are covered.
+    docker:
+      - image: cimg/base:current-24.04
+    resource_class: large
+    steps:
+      - checkout
+      - run:
+          name: Verify table coverage
+          command: |
+            set -euo pipefail
+            grep -oE '^\s*\["[0-9]+\.[0-9]+\.[0-9]+"\]=' src/scripts/install.sh | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort -V > /tmp/table-versions.txt
+            grep -vE '^\s*(#|$)' src/scripts/upstream_checksums.txt | awk '{ print $1 }' | sort -V > /tmp/upstream-versions.txt
+            echo "Pinned versions: $(tr '\n' ' ' < /tmp/table-versions.txt)"
+            diff /tmp/table-versions.txt /tmp/upstream-versions.txt
+
+            default=$(awk '/^  version:/ { f = 1 } f && /default:/ { gsub(/"/, "", $2); print $2; exit }' src/commands/install.yml)
+            echo "Default version: ${default}"
+            grep -qx "${default}" /tmp/table-versions.txt
+
+            # Every pinned version must be installed by at least one test job.
+            for version in $(cat /tmp/table-versions.txt); do
+              grep -qE "\"${version//./\\.}\"" .circleci/test-deploy.yml || { echo "No install test for ${version}"; exit 1; }
+            done
+      - run:
+          name: Re-derive checksums from upstream
+          command: |
+            set -euo pipefail
+            grep -oE '^\s*\["[0-9]+\.[0-9]+\.[0-9]+"\]="[0-9a-f]{128}"' src/scripts/install.sh | tr -d ' ' | sort -V > /tmp/table.txt
+            # Anchor purely on the recorded checksums, avoiding GitHub API rate limits.
+            grep -vE '^\s*(#|$)' src/scripts/upstream_checksums.txt | awk '{ print $1, $2 }' \
+              | SKIP_RELEASE_NOTES=true xargs -P 6 -n 2 sh -c 'bash src/scripts/install_hash.sh -v "$1" -c "$2"' _ \
+              | sort -V > /tmp/derived.txt
+            diff /tmp/table.txt /tmp/derived.txt
+            echo "All $(wc -l < /tmp/table.txt) checksums re-derived from upstream."
+
+workflows:
+  test-deploy:
+    jobs:
+      # Make sure to include "filters: *filters" in every test job you want to run as part of your deployment.
+      - install-docker:
+          matrix:
+            alias: install-java-matrix
+            parameters:
+              java: ["17.0", "21.0", "25.0"]
+              resource_class: [medium, arm.medium]
+              version: ["2.17.0"]
+          filters: *filters
+      # Every other pinned release, each on the oldest Java it supports. Caching
+      # is disabled so these don't accumulate cache storage.
+      - install-docker:
+          matrix:
+            alias: install-java8-matrix
+            parameters:
+              java: ["8.0"]
+              version: ["2.4.0", "2.4.2", "2.4.3", "2.5.0", "2.7.0", "2.8.0", "2.8.1", "2.9.0", "2.10.0", "2.11.0", "2.11.1"]
+          caching: false
+          filters: *filters
+      - install-docker:
+          matrix:
+            alias: install-java11-matrix
+            parameters:
+              java: ["11.0"]
+              version: ["2.12.0", "2.13.0", "2.14.0", "2.15.0", "2.16.0"]
+          caching: false
+          filters: *filters
+      - install-docker:
+          name: install-docker-17.0-medium-2.16.1
+          java: "17.0"
+          version: "2.16.1"
+          caching: false
+          filters: *filters
+      # The oldest release whose launcher accepts modern Java versions.
+      - install-docker:
+          name: install-docker-25.0-medium-2.7.0
+          java: "25.0"
+          version: "2.7.0"
+          caching: false
+          filters: *filters
+      - install-daemon:
+          filters: *filters
+      - install-custom-paths:
+          filters: *filters
+      - install-idempotent:
+          filters: *filters
+      - install-root-image:
+          filters: *filters
+      - install-machine:
+          matrix:
+            parameters:
+              resource_class: [medium, arm.medium]
+          filters: *filters
+      - install-cache-roundtrip:
+          # The 2.17.0 installs populate the cache this job restores.
+          requires: [install-java-matrix]
+          filters: *filters
+      - install-script-tests:
+          filters: *filters
+      - checksum-table:
+          filters: *filters
+      # The orb must be re-packed for publishing, and saved to the workspace.
+      - orb-tools/pack:
+          filters: *release-filters
+      - orb-tools/publish:
+          orb_name: juburr/zap-scanner-orb
+          vcs_type: << pipeline.project.type >>
+          pub_type: production
+          # Ensure this job requires all test jobs and the pack job.
+          requires:
+            - orb-tools/pack
+            - install-java-matrix
+            - install-java8-matrix
+            - install-java11-matrix
+            - install-docker-17.0-medium-2.16.1
+            - install-docker-25.0-medium-2.7.0
+            - install-daemon
+            - install-custom-paths
+            - install-idempotent
+            - install-root-image
+            - install-machine
+            - install-cache-roundtrip
+            - install-script-tests
+            - checksum-table
+          context: orb-publishing
+          filters: *release-filters
