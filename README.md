@@ -62,7 +62,7 @@ warns when installing anything else.
 version: 2.1
 
 orbs:
-  zap: juburr/zap-scanner-orb@1
+  zap: juburr/zap-scanner-orb@0
 
 parameters:
   zap_version:
