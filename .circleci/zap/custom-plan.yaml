@@ -1,3 +1,5 @@
+# Custom plan fixture for the scan command tests. Exits 2 (plan warnings) when
+# any low risk alert is raised, which the scan command reports but passes.
 env:
   contexts:
     - name: target
@@ -8,27 +10,16 @@ env:
     failOnWarning: false
     progressToStdout: true
 jobs:
-  - type: passiveScan-config
-    parameters:
-      maxAlertsPerRule: 10
   - type: spider
     parameters:
       context: target
       maxDuration: 1
   - type: passiveScan-wait
-    parameters:
-      maxDuration: 2
-  - type: report
-    parameters:
-      template: traditional-html
-      reportDir: ${ZAP_REPORT_DIR}
-      reportFile: report.html
   - type: report
     parameters:
       template: traditional-json
       reportDir: ${ZAP_REPORT_DIR}
-      reportFile: report.json
+      reportFile: custom.json
   - type: exitStatus
     parameters:
-      errorLevel: High
-      warnLevel: ${ZAP_WARN_LEVEL}
+      warnLevel: Low

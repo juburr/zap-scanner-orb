@@ -120,55 +120,97 @@ jobs:
           path: /tmp/zap-daemon.log
           destination: zap-daemon.log
 
-  scan-spike:
+  scan-docker:
     description: >
-      Prototype for the scan command. Runs Automation Framework plans with
-      zap.sh -autorun against a service container and asserts on exit codes
-      and reports.
+      Scans an nginx service container with the scan command, which must pass
+      at fail_on high and leave a complete set of reports behind.
+    parameters:
+      java:
+        type: string
+        default: "21.0"
+      version:
+        type: string
+        default: "2.17.0"
+      caching:
+        type: boolean
+        default: true
+      scan_type:
+        type: string
+      api_definition:
+        type: string
+        default: ""
+      report_pattern:
+        type: string
+        default: "Missing Anti-clickjacking Header"
+    docker:
+      - image: cimg/openjdk:<< parameters.java >>
+      - image: nginx:stable-alpine
+    environment:
+      SCAN_TARGET: http://localhost/
+    steps:
+      - checkout
+      - zap-scanner-orb/install:
+          caching: << parameters.caching >>
+          verify_checksums: strict
+          version: << parameters.version >>
+      - zap-scanner-orb/scan:
+          target: $SCAN_TARGET
+          scan_type: << parameters.scan_type >>
+          api_definition: << parameters.api_definition >>
+          fail_on: high
+          active_scan_minutes: 3
+      - run:
+          name: Verify the reports
+          command: |
+            set -euo pipefail
+            for report in report.html report.json report.md plan.yaml zap.log; do
+              test -s "/tmp/zap-reports/${report}" || { echo "missing ${report}"; exit 1; }
+            done
+            grep -qF "<< parameters.report_pattern >>" /tmp/zap-reports/report.json
+            # Expanded from $SCAN_TARGET by the command.
+            grep -qF -- "- 'http://localhost/'" /tmp/zap-reports/plan.yaml
+            test ! -e "${HOME}/.ZAP"
+
+  scan-custom-plan:
+    description: >
+      Runs a custom Automation Framework plan with the scan command, writing
+      reports to a non-default directory without storing them as artifacts.
     docker:
       - image: cimg/openjdk:21.0
       - image: nginx:stable-alpine
-    environment:
-      ZAP_TARGET: http://localhost/
-      REPORT_ROOT: /tmp/zap-reports
+    steps:
+      - checkout
+      - zap-scanner-orb/install:
+          verify_checksums: strict
+      - zap-scanner-orb/scan:
+          plan: .circleci/zap/custom-plan.yaml
+          target: http://localhost/
+          report_dir: /tmp/custom zap reports
+          store_artifacts: false
+          max_memory: 768m
+      - run:
+          name: Verify the plan's report
+          command: |
+            set -euo pipefail
+            test -s "/tmp/custom zap reports/custom.json"
+            test -s "/tmp/custom zap reports/zap.log"
+            test ! -e "/tmp/custom zap reports/plan.yaml"
+            test ! -e /tmp/zap-reports
+
+  scan-script-tests:
+    description: >
+      Runs the scan script directly against failure and edge cases that can't
+      be asserted through the orb command, plus real scans of each type.
+    docker:
+      - image: cimg/openjdk:21.0
+      - image: nginx:stable-alpine
     steps:
       - checkout
       - zap-scanner-orb/install:
           verify_checksums: strict
       - run:
-          name: Wait for the target
-          command: |
-            for _ in $(seq 1 30); do
-              curl -fsS -o /dev/null "${ZAP_TARGET}" && exit 0
-              sleep 1
-            done
-            echo "Target never became reachable"
-            exit 1
-      - run:
-          name: Baseline scan that crosses the warn threshold
-          command: |
-            ZAP_WARN_LEVEL=Medium bash .circleci/scripts/scan_spike.sh baseline-warn .circleci/zap/baseline-plan.yaml 2 \
-              '"name": ?"Missing Anti-clickjacking Header"'
-      - run:
-          name: Baseline scan below the warn threshold
-          command: ZAP_WARN_LEVEL=High bash .circleci/scripts/scan_spike.sh baseline-pass .circleci/zap/baseline-plan.yaml 0
-      - run:
-          name: Baseline scan of an unreachable target
-          command: |
-            ZAP_WARN_LEVEL=High ZAP_TARGET=http://localhost:8999/ \
-              bash .circleci/scripts/scan_spike.sh unreachable .circleci/zap/baseline-plan.yaml 1
-      - run:
-          name: Full scan
-          command: ZAP_WARN_LEVEL=Medium bash .circleci/scripts/scan_spike.sh full .circleci/zap/full-plan.yaml 2
-      - run:
-          name: API scan from an OpenAPI definition
-          command: |
-            ZAP_WARN_LEVEL=Medium ZAP_API_FILE="${PWD}/.circleci/zap/openapi.json" \
-              bash .circleci/scripts/scan_spike.sh api .circleci/zap/api-plan.yaml 2 '/api/items'
-      - store_artifacts:
-          path: /tmp/zap-reports
-          destination: zap-reports
-          when: always
+          name: Run scan script tests
+          command: SCAN_TARGET=http://localhost/ bash .circleci/scripts/scan_script_tests.sh
 
   install-custom-paths:
     description: >
@@ -396,7 +438,31 @@ workflows:
           filters: *filters
       - install-daemon:
           filters: *filters
-      - scan-spike:
+      - scan-docker:
+          name: scan-baseline
+          scan_type: baseline
+          filters: *filters
+      - scan-docker:
+          name: scan-full
+          scan_type: full
+          filters: *filters
+      - scan-docker:
+          name: scan-api
+          scan_type: api
+          api_definition: .circleci/zap/openapi.json
+          report_pattern: /api/items
+          filters: *filters
+      # The oldest release the scan command supports, on the oldest Java it supports.
+      - scan-docker:
+          name: scan-baseline-2.12.0
+          java: "11.0"
+          version: "2.12.0"
+          caching: false
+          scan_type: baseline
+          filters: *filters
+      - scan-custom-plan:
+          filters: *filters
+      - scan-script-tests:
           filters: *filters
       - install-custom-paths:
           filters: *filters
@@ -440,5 +506,11 @@ workflows:
             - install-cache-roundtrip
             - install-script-tests
             - checksum-table
+            - scan-baseline
+            - scan-full
+            - scan-api
+            - scan-baseline-2.12.0
+            - scan-custom-plan
+            - scan-script-tests
           context: orb-publishing
           filters: *release-filters

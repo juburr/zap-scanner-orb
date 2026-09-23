@@ -1,0 +1,99 @@
+description: >
+  Runs a headless ZAP scan with the Automation Framework and stores the HTML, JSON, and Markdown reports as artifacts.
+  Generates a baseline (spider and passive scan), full (adds an active scan), or api (OpenAPI import and active scan)
+  plan, or runs a custom plan. Full and api scans send attacks to the target, so only scan applications you are
+  authorized to test. Requires ZAP 2.12.0 or newer, installed with the install command earlier in the job.
+parameters:
+  target:
+    type: string
+    default: ""
+    description: >
+      URL of the application to scan, such as http://localhost:8080. Required unless a custom plan is provided.
+      Environment variables are expanded.
+  scan_type:
+    type: enum
+    enum: ["baseline", "full", "api"]
+    default: baseline
+    description: >
+      "baseline" spiders the target and reports passive scan alerts without attacking it. "full" also runs an active
+      scan. "api" imports api_definition instead of spidering, then runs an active scan. Ignored when plan is set.
+  api_definition:
+    type: string
+    default: ""
+    description: >
+      Path or http(s) URL of the OpenAPI definition to import when scan_type is api. Environment variables are expanded.
+  plan:
+    type: string
+    default: ""
+    description: >
+      Path to a custom Automation Framework plan to run instead of a generated one. The plan can reference
+      ${ZAP_TARGET} and ${ZAP_REPORT_DIR}, and must set its own pass/fail criteria, since fail_on, scan_type,
+      spider_minutes, and active_scan_minutes are ignored. Environment variables are expanded.
+  fail_on:
+    type: enum
+    enum: ["high", "medium", "low", "info", "never"]
+    default: medium
+    description: >
+      Fails the step if any alert is at or above this risk level. "never" only reports alerts. Ignored when plan is set.
+  spider_minutes:
+    type: integer
+    default: 1
+    description: Maximum minutes to spend spidering the target, or 0 for no limit. Used by baseline and full scans.
+  active_scan_minutes:
+    type: integer
+    default: 10
+    description: Maximum minutes to spend on the active scan, or 0 for no limit. Used by full and api scans.
+  wait_for_target:
+    type: integer
+    default: 60
+    description: >
+      Seconds to wait for the target to respond before scanning, for applications started earlier in the job or in a
+      service container. Any HTTP response counts. 0 disables waiting.
+  max_memory:
+    type: string
+    default: 1g
+    description: >
+      Maximum Java heap size for ZAP, such as 512m or 2g. Set explicitly because the JVM otherwise sizes the heap from
+      the host's memory rather than the container's limit.
+  report_dir:
+    type: string
+    default: /tmp/zap-reports
+    description: Absolute path of the directory to write reports, the plan, and the ZAP log into.
+  store_artifacts:
+    type: boolean
+    default: true
+    description: Store report_dir as job artifacts under zap-reports/, including when the scan fails.
+  extra_options:
+    type: string
+    default: ""
+    description: >
+      Additional zap.sh command-line options, such as "-config connection.timeoutInSecs=60". Split on whitespace, so
+      individual values cannot contain spaces. Environment variables are expanded.
+  no_output_timeout:
+    type: string
+    default: 30m
+    description: >
+      How long the scan may run without printing output before CircleCI stops it. Raise it for long active scans.
+steps:
+  - run:
+      name: Scan with ZAP
+      no_output_timeout: << parameters.no_output_timeout >>
+      environment:
+        PARAM_TARGET: << parameters.target >>
+        PARAM_SCAN_TYPE: << parameters.scan_type >>
+        PARAM_API_DEFINITION: << parameters.api_definition >>
+        PARAM_PLAN: << parameters.plan >>
+        PARAM_FAIL_ON: << parameters.fail_on >>
+        PARAM_SPIDER_MINUTES: << parameters.spider_minutes >>
+        PARAM_ACTIVE_SCAN_MINUTES: << parameters.active_scan_minutes >>
+        PARAM_WAIT_FOR_TARGET: << parameters.wait_for_target >>
+        PARAM_MAX_MEMORY: << parameters.max_memory >>
+        PARAM_REPORT_DIR: << parameters.report_dir >>
+        PARAM_EXTRA_OPTIONS: << parameters.extra_options >>
+      command: << include(scripts/scan.sh) >>
+  - when:
+      condition: << parameters.store_artifacts >>
+      steps:
+        - store_artifacts:
+            path: << parameters.report_dir >>
+            destination: zap-reports
