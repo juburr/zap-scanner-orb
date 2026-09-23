@@ -171,6 +171,86 @@ jobs:
             grep -qF -- "- 'http://localhost/'" /tmp/zap-reports/plan.yaml
             test ! -e "${HOME}/.ZAP"
 
+  scan-auth-header:
+    description: >
+      Scans an nginx service container that only serves its pages, including a
+      link to /members/, to requests carrying the right X-Api-Key header. The
+      authenticated scan must reach /members/, while scans without the header,
+      or with the header restricted to another site, must not.
+    parameters:
+      java:
+        type: string
+        default: "21.0"
+      version:
+        type: string
+        default: "2.17.0"
+      caching:
+        type: boolean
+        default: true
+    docker:
+      - image: cimg/openjdk:<< parameters.java >>
+      - image: nginx:stable-alpine
+        command:
+          - sh
+          - -c
+          - |
+            cat > /etc/nginx/conf.d/default.conf << 'EOF'
+            server {
+                listen 80;
+                default_type text/html;
+                location = / {
+                    if ($http_x_api_key != "ci-test-token") { return 401; }
+                    return 200 '<html><body><a href="/members/">Members</a></body></html>';
+                }
+                location = /members/ {
+                    if ($http_x_api_key != "ci-test-token") { return 401; }
+                    return 200 '<html><body>Members only</body></html>';
+                }
+            }
+            EOF
+            exec nginx -g 'daemon off;'
+    environment:
+      SCAN_TOKEN: ci-test-token
+    steps:
+      - zap-scanner-orb/install:
+          caching: << parameters.caching >>
+          verify_checksums: strict
+          version: << parameters.version >>
+      - zap-scanner-orb/scan:
+          target: http://localhost/
+          auth_header: X-Api-Key
+          auth_header_value: SCAN_TOKEN
+          fail_on: never
+          report_dir: /tmp/zap-authenticated
+      - zap-scanner-orb/scan:
+          target: http://localhost/
+          fail_on: never
+          report_dir: /tmp/zap-unauthenticated
+          store_artifacts: false
+      - zap-scanner-orb/scan:
+          target: http://127.0.0.1/
+          auth_header: X-Api-Key
+          auth_header_value: SCAN_TOKEN
+          auth_header_site: localhost
+          fail_on: never
+          report_dir: /tmp/zap-other-site
+          store_artifacts: false
+      - run:
+          name: Verify the header was sent only where expected
+          command: |
+            set -euo pipefail
+            grep -qF "http://localhost/members/" /tmp/zap-authenticated/report.json \
+              || { echo "the authenticated scan did not reach /members/"; exit 1; }
+            if grep -qF "/members/" /tmp/zap-unauthenticated/report.json; then
+              echo "the unauthenticated scan reached /members/"; exit 1
+            fi
+            if grep -qF "/members/" /tmp/zap-other-site/report.json; then
+              echo "the header was sent to a site other than auth_header_site"; exit 1
+            fi
+            if grep -rqF "${SCAN_TOKEN}" /tmp/zap-authenticated /tmp/zap-unauthenticated /tmp/zap-other-site; then
+              echo "the header value was written to the reports, plan, or log"; exit 1
+            fi
+
   scan-custom-plan:
     description: >
       Runs a custom Automation Framework plan with the scan command, writing
@@ -460,6 +540,14 @@ workflows:
           caching: false
           scan_type: baseline
           filters: *filters
+      - scan-auth-header:
+          filters: *filters
+      - scan-auth-header:
+          name: scan-auth-header-2.12.0
+          java: "11.0"
+          version: "2.12.0"
+          caching: false
+          filters: *filters
       - scan-custom-plan:
           filters: *filters
       - scan-script-tests:
@@ -510,6 +598,8 @@ workflows:
             - scan-full
             - scan-api
             - scan-baseline-2.12.0
+            - scan-auth-header
+            - scan-auth-header-2.12.0
             - scan-custom-plan
             - scan-script-tests
           context: orb-publishing

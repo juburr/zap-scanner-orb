@@ -35,6 +35,9 @@ PLAN=$(expand "${PARAM_PLAN:-}")
 FAIL_ON="${PARAM_FAIL_ON:-medium}"
 SPIDER_MINUTES="${PARAM_SPIDER_MINUTES:-1}"
 ACTIVE_SCAN_MINUTES="${PARAM_ACTIVE_SCAN_MINUTES:-10}"
+AUTH_HEADER_VALUE_VAR="${PARAM_AUTH_HEADER_VALUE:-ZAP_AUTH_HEADER_VALUE}"
+AUTH_HEADER=$(expand "${PARAM_AUTH_HEADER:-}")
+AUTH_HEADER_SITE=$(expand "${PARAM_AUTH_HEADER_SITE:-}")
 WAIT_FOR_TARGET="${PARAM_WAIT_FOR_TARGET:-60}"
 MAX_MEMORY="${PARAM_MAX_MEMORY:-1g}"
 REPORT_DIR=$(trim_slash "${PARAM_REPORT_DIR:-/tmp/zap-reports}")
@@ -77,6 +80,21 @@ risk_code() {
 # Quotes a value as a single-quoted YAML scalar.
 yaml_quote() {
     printf "'%s'" "${1//\'/\'\'}"
+}
+
+# Prints the lowercased host of an http(s) URL, without userinfo, port, or the
+# brackets around an IPv6 address.
+url_host() {
+    local host=${1#*://}
+    host=${host%%[/?#]*}
+    host=${host##*@}
+    if [[ "${host}" == \[* ]]; then
+        host=${host#\[}
+        host=${host%%]*}
+    else
+        host=${host%%:*}
+    fi
+    printf '%s' "${host,,}"
 }
 
 # ----------------------------------------------------------------------------
@@ -144,6 +162,53 @@ else
     elif [[ -n "${API_DEFINITION}" ]]; then
         echo "WARN: 'api_definition' is ignored unless scan_type is api."
     fi
+fi
+
+# The header value is a secret, so it is only ever read from the environment,
+# never printed, and handed to ZAP through its environment rather than the
+# plan or the command line.
+if [[ ! "${AUTH_HEADER_VALUE_VAR}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+    echo "ERROR: Invalid auth_header_value '${AUTH_HEADER_VALUE_VAR}'. Expected the name of an environment variable."
+    exit 1
+fi
+AUTH_HEADER_VALUE="${!AUTH_HEADER_VALUE_VAR:-}"
+if [[ -z "${AUTH_HEADER_VALUE}" ]]; then
+    if [[ "${AUTH_HEADER_VALUE_VAR}" != "ZAP_AUTH_HEADER_VALUE" ]]; then
+        echo "ERROR: auth_header_value names \$${AUTH_HEADER_VALUE_VAR}, which is unset or empty."
+        echo "ERROR: Check that the context or project environment variable holding it is available to this job."
+        exit 1
+    fi
+    if [[ -n "${AUTH_HEADER}" ]] || [[ -n "${AUTH_HEADER_SITE}" ]]; then
+        echo "WARN: 'auth_header' and 'auth_header_site' are ignored because \$${AUTH_HEADER_VALUE_VAR} is empty."
+    fi
+else
+    AUTH_HEADER="${AUTH_HEADER:-${ZAP_AUTH_HEADER:-Authorization}}"
+    # RFC 9110 token characters.
+    header_name_re="^[-!#\$%&'*+.^_\`|~0-9A-Za-z]+\$"
+    if [[ ! "${AUTH_HEADER}" =~ ${header_name_re} ]]; then
+        echo "ERROR: Invalid auth_header '${AUTH_HEADER}'. Expected an HTTP header name such as Authorization."
+        exit 1
+    fi
+    if [[ "${AUTH_HEADER_VALUE}" == *$'\n'* ]] || [[ "${AUTH_HEADER_VALUE}" == *$'\r'* ]]; then
+        echo "ERROR: \$${AUTH_HEADER_VALUE_VAR} contains a line break, which is not allowed in a header value."
+        exit 1
+    fi
+    AUTH_HEADER_SITE="${AUTH_HEADER_SITE:-${ZAP_AUTH_HEADER_SITE:-}}"
+    if [[ -z "${AUTH_HEADER_SITE}" ]] && [[ -n "${TARGET}" ]]; then
+        AUTH_HEADER_SITE=$(url_host "${TARGET}")
+    fi
+    # ZAP sends the header everywhere when no site is set, which could leak it
+    # to any other host a custom plan reaches.
+    if [[ -z "${AUTH_HEADER_SITE}" ]]; then
+        echo "ERROR: 'auth_header_site' is required when a custom plan is run without a 'target'."
+        exit 1
+    fi
+    if [[ "${AUTH_HEADER_SITE}" =~ [[:space:]] ]]; then
+        echo "ERROR: Invalid auth_header_site '${AUTH_HEADER_SITE}'. Expected a host name such as api.example.com."
+        exit 1
+    fi
+    echo "  AUTH_HEADER: ${AUTH_HEADER} (value from \$${AUTH_HEADER_VALUE_VAR})"
+    echo "  AUTH_HEADER_SITE: ${AUTH_HEADER_SITE}"
 fi
 
 # ----------------------------------------------------------------------------
@@ -277,8 +342,20 @@ read -r -a EXTRA_ARGS <<< "${EXTRA_OPTIONS}"
 # an explicit heap size stops the JVM sizing itself from the host's memory
 # rather than the container's. -silent stops ZAP making unsolicited requests,
 # such as update checks and telemetry, to its own services.
+#
+# ZAP adds its authentication header from these variables. They are always
+# reset, so values left in the environment can't send a header to sites other
+# than auth_header_site.
 ZAP_RC=0
-zap.sh -cmd -silent -dir "${ZAP_HOME}/home" "-Xmx${MAX_MEMORY}" "${EXTRA_ARGS[@]}" -autorun "${PLAN}" || ZAP_RC=$?
+(
+    unset ZAP_AUTH_HEADER_VALUE ZAP_AUTH_HEADER ZAP_AUTH_HEADER_SITE
+    if [[ -n "${AUTH_HEADER_VALUE}" ]]; then
+        export ZAP_AUTH_HEADER_VALUE="${AUTH_HEADER_VALUE}"
+        export ZAP_AUTH_HEADER="${AUTH_HEADER}"
+        export ZAP_AUTH_HEADER_SITE="${AUTH_HEADER_SITE}"
+    fi
+    exec zap.sh -cmd -silent -dir "${ZAP_HOME}/home" "-Xmx${MAX_MEMORY}" "${EXTRA_ARGS[@]}" -autorun "${PLAN}"
+) || ZAP_RC=$?
 cp "${ZAP_HOME}/home/zap.log" "${REPORT_DIR}/zap.log" 2> /dev/null || true
 
 # ----------------------------------------------------------------------------
