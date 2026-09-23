@@ -131,7 +131,7 @@ make_fake_java() {
 make_script_without_checksum() {
     local version=$1
     local dest=$2
-    sed "/\[\"${version//./\\.}\"\]=/d" "${SCRIPT}" > "${dest}"
+    sed "/\[\"${version//./\\.}\"\]=\"[0-9a-f]\{128\}\"/d" "${SCRIPT}" > "${dest}"
     ! grep -q "\[\"${version}\"\]=" "${dest}"
 }
 
@@ -318,7 +318,7 @@ end
 
 begin "tampered archive fails verification when it is freshly downloaded"
 # Simulate a bad upstream by pointing the table at the wrong checksum.
-sed "s/\[\"${VERSION//./\\.}\"\]=\"[0-9a-f]*\"/[\"${VERSION}\"]=\"$(printf '0%.0s' {1..128})\"/" "${SCRIPT}" > "${WORK}/install_bad_checksum.sh"
+sed "s/\[\"${VERSION//./\\.}\"\]=\"[0-9a-f]\{128\}\"/[\"${VERSION}\"]=\"$(printf '0%.0s' {1..128})\"/" "${SCRIPT}" > "${WORK}/install_bad_checksum.sh"
 mkdir -p "${WORK}/badsum-dl"
 cp "${CACHE}/zap.tar.gz" "${WORK}/badsum-dl/zap.tar.gz"
 INSTALL_SCRIPT="${WORK}/install_bad_checksum.sh" run_install ZAP_ORB_DOWNLOAD_DIR="${WORK}/badsum-dl" \
