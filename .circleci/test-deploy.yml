@@ -166,10 +166,12 @@ jobs:
             for report in report.html report.json report.md plan.yaml zap.log; do
               test -s "/tmp/zap-reports/${report}" || { echo "missing ${report}"; exit 1; }
             done
-            grep -qF "<< parameters.report_pattern >>" /tmp/zap-reports/report.json
+            grep -qF "<< parameters.report_pattern >>" /tmp/zap-reports/report.json \
+              || { echo "report.json lacks '<< parameters.report_pattern >>'"; exit 1; }
             # Expanded from $SCAN_TARGET by the command.
-            grep -qF -- "- 'http://localhost/'" /tmp/zap-reports/plan.yaml
-            test ! -e "${HOME}/.ZAP"
+            grep -qF -- "- 'http://localhost/'" /tmp/zap-reports/plan.yaml \
+              || { echo "plan.yaml does not target http://localhost/"; exit 1; }
+            test ! -e "${HOME}/.ZAP" || { echo "the scan created ${HOME}/.ZAP"; exit 1; }
 
   scan-custom-plan:
     description: >
