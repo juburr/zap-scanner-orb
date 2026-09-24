@@ -306,7 +306,7 @@ check "exit code is zero" rc_is_zero
 zap_dir=$(sed -n '4p' "${FAKE_STATE}/args" 2> /dev/null)
 plan_path=$(tail -n 1 "${FAKE_STATE}/args" 2> /dev/null)
 check "passes the expected arguments in order" args_are -cmd -silent -dir "${zap_dir}" -Xmx512m \
-    -config 'a.b=*' -config 'c.d=[x]' -autorun "${plan_path}"
+    -config pscans.threads=1 -config 'a.b=*' -config 'c.d=[x]' -autorun "${plan_path}"
 check "uses a temporary ZAP home directory" test "${zap_dir#"${WORK}/tmp/"}" != "${zap_dir}"
 check "passes an absolute plan path" test "${plan_path:0:1}" = "/"
 end
