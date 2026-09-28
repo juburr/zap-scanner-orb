@@ -341,7 +341,10 @@ read -r -a EXTRA_ARGS <<< "${EXTRA_OPTIONS}"
 # An isolated home directory keeps runs independent of any ~/.ZAP config, and
 # an explicit heap size stops the JVM sizing itself from the host's memory
 # rather than the container's. -silent stops ZAP making unsolicited requests,
-# such as update checks and telemetry, to its own services.
+# such as update checks and telemetry, to its own services. Passive scanning
+# is single-threaded because, with more threads, ZAP 2.17.0 intermittently
+# drops alerts raised concurrently from its alert tree, and so from the reports
+# and the fail_on check. It comes before the extra options so it can be overridden.
 #
 # ZAP adds its authentication header from these variables. They are always
 # reset, so values left in the environment can't send a header to sites other
@@ -354,7 +357,8 @@ ZAP_RC=0
         export ZAP_AUTH_HEADER="${AUTH_HEADER}"
         export ZAP_AUTH_HEADER_SITE="${AUTH_HEADER_SITE}"
     fi
-    exec zap.sh -cmd -silent -dir "${ZAP_HOME}/home" "-Xmx${MAX_MEMORY}" "${EXTRA_ARGS[@]}" -autorun "${PLAN}"
+    exec zap.sh -cmd -silent -dir "${ZAP_HOME}/home" "-Xmx${MAX_MEMORY}" -config pscans.threads=1 "${EXTRA_ARGS[@]}" \
+        -autorun "${PLAN}"
 ) || ZAP_RC=$?
 cp "${ZAP_HOME}/home/zap.log" "${REPORT_DIR}/zap.log" 2> /dev/null || true
 
