@@ -43,6 +43,27 @@ parameters:
     type: integer
     default: 10
     description: Maximum minutes to spend on the active scan, or 0 for no limit. Used by full and api scans.
+  auth_header_value:
+    type: env_var_name
+    default: ZAP_AUTH_HEADER_VALUE
+    description: >
+      Name of the environment variable holding a value, such as "Bearer <token>", to send in auth_header with every
+      request to auth_header_site. Store it in a context or project environment variable, never in config. No header
+      is sent when the variable is unset or empty, but the step fails if a variable other than the default is named
+      and is empty, so a missing context never silently downgrades to an unauthenticated scan.
+  auth_header:
+    type: string
+    default: ""
+    description: >
+      Name of the header that carries auth_header_value. Defaults to $ZAP_AUTH_HEADER if set, otherwise
+      Authorization. Environment variables are expanded.
+  auth_header_site:
+    type: string
+    default: ""
+    description: >
+      Only send the header to sites whose name contains this value. Defaults to $ZAP_AUTH_HEADER_SITE if set,
+      otherwise the host of target, so the header is never sent to other hosts the scan reaches. Required for custom
+      plans without a target. Environment variables are expanded.
   wait_for_target:
     type: integer
     default: 60
@@ -88,6 +109,9 @@ steps:
         PARAM_FAIL_ON: << parameters.fail_on >>
         PARAM_SPIDER_MINUTES: << parameters.spider_minutes >>
         PARAM_ACTIVE_SCAN_MINUTES: << parameters.active_scan_minutes >>
+        PARAM_AUTH_HEADER_VALUE: << parameters.auth_header_value >>
+        PARAM_AUTH_HEADER: << parameters.auth_header >>
+        PARAM_AUTH_HEADER_SITE: << parameters.auth_header_site >>
         PARAM_WAIT_FOR_TARGET: << parameters.wait_for_target >>
         PARAM_MAX_MEMORY: << parameters.max_memory >>
         PARAM_REPORT_DIR: << parameters.report_dir >>

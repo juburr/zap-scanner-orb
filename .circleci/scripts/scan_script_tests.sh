@@ -85,6 +85,8 @@ fi
 mkdir -p "${FAKE_STATE}"
 printf '%s\n' "$@" > "${FAKE_STATE}/args"
 printf '%s\n%s\n' "${ZAP_TARGET}" "${ZAP_REPORT_DIR}" > "${FAKE_STATE}/env"
+printf '%s\n%s\n%s\n' "${ZAP_AUTH_HEADER_VALUE-<unset>}" "${ZAP_AUTH_HEADER-<unset>}" \
+    "${ZAP_AUTH_HEADER_SITE-<unset>}" > "${FAKE_STATE}/auth"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -dir) mkdir -p "$2" && echo "fake zap log" > "$2/zap.log"; shift ;;
@@ -127,6 +129,7 @@ run_scan() {
     rm -rf "${FAKE_STATE}" "${REPORTS}"
     mkdir -p "${WORK}/tmp"
     OUTPUT=$(env -u BASH_ENV -u ZAP_VERSION -u FAKE_RC -u FAKE_REPORT \
+        -u ZAP_AUTH_HEADER_VALUE -u ZAP_AUTH_HEADER -u ZAP_AUTH_HEADER_SITE \
         PATH="${FAKE_BIN}:${PATH}" \
         TMPDIR="${WORK}/tmp" \
         FAKE_STATE="${FAKE_STATE}" \
@@ -138,6 +141,9 @@ run_scan() {
         PARAM_FAIL_ON="medium" \
         PARAM_SPIDER_MINUTES="1" \
         PARAM_ACTIVE_SCAN_MINUTES="10" \
+        PARAM_AUTH_HEADER_VALUE="ZAP_AUTH_HEADER_VALUE" \
+        PARAM_AUTH_HEADER="" \
+        PARAM_AUTH_HEADER_SITE="" \
         PARAM_WAIT_FOR_TARGET="0" \
         PARAM_MAX_MEMORY="1g" \
         PARAM_REPORT_DIR="${REPORTS}" \
@@ -150,6 +156,17 @@ run_scan() {
 # Succeeds if the fake zap.sh received exactly these arguments, in order.
 args_are() {
     diff <(printf '%s\n' "$@") "${FAKE_STATE}/args" > /dev/null
+}
+
+# Succeeds if the fake zap.sh saw exactly this ZAP_AUTH_HEADER_VALUE,
+# ZAP_AUTH_HEADER, and ZAP_AUTH_HEADER_SITE, with "<unset>" for unset ones.
+auth_env_is() {
+    diff <(printf '%s\n' "$@") "${FAKE_STATE}/auth" > /dev/null
+}
+
+# Succeeds if the value appears nowhere in the output, reports, or arguments.
+secret_absent() {
+    ! grep -qF -- "$1" <<< "${OUTPUT}" && ! grep -rsqF -- "$1" "${REPORTS}" "${FAKE_STATE}/args" "${FAKE_STATE}/plan"
 }
 
 # ---------------------------------------------------------------------------
@@ -323,6 +340,118 @@ if command -v circleci &> /dev/null; then
         PARAM_EXTRA_OPTIONS='-config connection.timeoutInSecs=${SCAN_TEST_TIMEOUT}'
     check "exit code is zero" rc_is_zero
     check "passed the expanded option" grep -qx -- "connection.timeoutInSecs=45" "${FAKE_STATE}/args"
+else
+    echo "    skipped: the CircleCI CLI is not available"
+fi
+end
+
+# ---------------------------------------------------------------------------
+# Authentication header
+# ---------------------------------------------------------------------------
+
+expect_rejected "an auth_header_value that is not a variable name" \
+    "Invalid auth_header_value 'Bearer abc'. Expected the name of an environment variable." \
+    PARAM_AUTH_HEADER_VALUE="Bearer abc"
+expect_rejected "a named auth_header_value variable that is unset" \
+    "auth_header_value names \$SCAN_TEST_TOKEN, which is unset or empty." \
+    PARAM_AUTH_HEADER_VALUE="SCAN_TEST_TOKEN"
+expect_rejected "a named auth_header_value variable that is empty" \
+    "auth_header_value names \$SCAN_TEST_TOKEN, which is unset or empty." \
+    PARAM_AUTH_HEADER_VALUE="SCAN_TEST_TOKEN" SCAN_TEST_TOKEN=""
+expect_rejected "an auth_header containing a colon" "Invalid auth_header 'X-Token:'" \
+    ZAP_AUTH_HEADER_VALUE="s3cr3t-value" PARAM_AUTH_HEADER="X-Token:"
+expect_rejected "an auth_header containing a space" "Invalid auth_header 'X Token'" \
+    ZAP_AUTH_HEADER_VALUE="s3cr3t-value" PARAM_AUTH_HEADER="X Token"
+expect_rejected "a header value containing a line break" \
+    "\$ZAP_AUTH_HEADER_VALUE contains a line break, which is not allowed in a header value." \
+    ZAP_AUTH_HEADER_VALUE=$'s3cr3t-value\r\nX-Injected: 1'
+expect_rejected "an auth_header_site containing whitespace" "Invalid auth_header_site 'a b'" \
+    ZAP_AUTH_HEADER_VALUE="s3cr3t-value" PARAM_AUTH_HEADER_SITE="a b"
+expect_rejected "an unrestricted header for a custom plan without a target" \
+    "'auth_header_site' is required when a custom plan is run without a 'target'." \
+    ZAP_AUTH_HEADER_VALUE="s3cr3t-value" PARAM_PLAN="${FIXTURES}/custom-plan.yaml" PARAM_TARGET=""
+
+begin "sends no header by default"
+run_scan FAKE_REPORT="${WORK}/report-none.json"
+check "exit code is zero" rc_is_zero
+check "ZAP saw no auth variables" auth_env_is "<unset>" "<unset>" "<unset>"
+check "printed no auth settings" output_lacks "AUTH_HEADER"
+end
+
+begin "ignores a header name and site left in the environment without a value"
+run_scan FAKE_REPORT="${WORK}/report-none.json" ZAP_AUTH_HEADER="X-Token" ZAP_AUTH_HEADER_SITE="example.com"
+check "exit code is zero" rc_is_zero
+check "ZAP saw no auth variables" auth_env_is "<unset>" "<unset>" "<unset>"
+end
+
+begin "warns that auth_header and auth_header_site need a value"
+run_scan FAKE_REPORT="${WORK}/report-none.json" PARAM_AUTH_HEADER="X-Token" PARAM_AUTH_HEADER_SITE="example.com"
+check "exit code is zero" rc_is_zero
+check "warned" output_has "'auth_header' and 'auth_header_site' are ignored because \$ZAP_AUTH_HEADER_VALUE is empty."
+check "ZAP saw no auth variables" auth_env_is "<unset>" "<unset>" "<unset>"
+end
+
+begin "reads ZAP_AUTH_HEADER_VALUE by default and restricts it to the target host"
+run_scan FAKE_REPORT="${WORK}/report-none.json" ZAP_AUTH_HEADER_VALUE="Bearer s3cr3t-value"
+check "exit code is zero" rc_is_zero
+check "ZAP saw the header, restricted to the target" auth_env_is "Bearer s3cr3t-value" "Authorization" "127.0.0.1"
+check "printed the header name and site" output_has "AUTH_HEADER: Authorization (value from \$ZAP_AUTH_HEADER_VALUE)"
+check "never exposed the value" secret_absent "s3cr3t-value"
+end
+
+begin "reads the header value from a named variable"
+run_scan FAKE_REPORT="${WORK}/report-none.json" PARAM_AUTH_HEADER_VALUE="SCAN_TEST_TOKEN" \
+    SCAN_TEST_TOKEN="s3cr3t-value" PARAM_AUTH_HEADER="X-Api-Key" PARAM_AUTH_HEADER_SITE="api.example.com"
+check "exit code is zero" rc_is_zero
+check "ZAP saw the configured header" auth_env_is "s3cr3t-value" "X-Api-Key" "api.example.com"
+check "printed the variable name" output_has "AUTH_HEADER: X-Api-Key (value from \$SCAN_TEST_TOKEN)"
+check "printed the site" output_has "AUTH_HEADER_SITE: api.example.com"
+check "never exposed the value" secret_absent "s3cr3t-value"
+end
+
+begin "falls back to ZAP_AUTH_HEADER and ZAP_AUTH_HEADER_SITE"
+run_scan FAKE_REPORT="${WORK}/report-none.json" ZAP_AUTH_HEADER_VALUE="s3cr3t-value" \
+    ZAP_AUTH_HEADER="X-Token" ZAP_AUTH_HEADER_SITE="example.com"
+check "exit code is zero" rc_is_zero
+check "ZAP saw the environment's settings" auth_env_is "s3cr3t-value" "X-Token" "example.com"
+end
+
+begin "parameters take precedence over ZAP_AUTH_HEADER and ZAP_AUTH_HEADER_SITE"
+run_scan FAKE_REPORT="${WORK}/report-none.json" ZAP_AUTH_HEADER_VALUE="s3cr3t-value" \
+    ZAP_AUTH_HEADER="X-Token" ZAP_AUTH_HEADER_SITE="example.com" \
+    PARAM_AUTH_HEADER="X-Other" PARAM_AUTH_HEADER_SITE="other.example.com"
+check "exit code is zero" rc_is_zero
+check "ZAP saw the parameters" auth_env_is "s3cr3t-value" "X-Other" "other.example.com"
+end
+
+expect_auth_site() {
+    local target=$1
+    local expected=$2
+    begin "restricts the header to '${expected}' for ${target}"
+    run_scan FAKE_REPORT="${WORK}/report-none.json" ZAP_AUTH_HEADER_VALUE="s3cr3t-value" PARAM_TARGET="${target}"
+    check "exit code is zero" rc_is_zero
+    check "ZAP saw the host" auth_env_is "s3cr3t-value" "Authorization" "${expected}"
+    end
+}
+
+expect_auth_site "https://user:pw@App.Example.COM:8443/a/b?c=d#e" "app.example.com"
+expect_auth_site "http://localhost?x=1" "localhost"
+expect_auth_site "http://[::1]:8080/" "::1"
+
+begin "restricts the header to the target of a custom plan"
+run_scan FAKE_REPORT="${WORK}/report-none.json" ZAP_AUTH_HEADER_VALUE="s3cr3t-value" \
+    PARAM_PLAN="${FIXTURES}/custom-plan.yaml" PARAM_TARGET="https://app.example.com/"
+check "exit code is zero" rc_is_zero
+check "ZAP saw the target host" auth_env_is "s3cr3t-value" "Authorization" "app.example.com"
+end
+
+begin "expands environment variables in auth_header and auth_header_site"
+if command -v circleci &> /dev/null; then
+    run_scan FAKE_REPORT="${WORK}/report-none.json" ZAP_AUTH_HEADER_VALUE="s3cr3t-value" \
+        SCAN_TEST_HEADER="X-Api-Key" SCAN_TEST_SITE="api.example.com" \
+        PARAM_AUTH_HEADER='${SCAN_TEST_HEADER}' PARAM_AUTH_HEADER_SITE='${SCAN_TEST_SITE}'
+    check "exit code is zero" rc_is_zero
+    check "ZAP saw the expanded values" auth_env_is "s3cr3t-value" "X-Api-Key" "api.example.com"
 else
     echo "    skipped: the CircleCI CLI is not available"
 fi

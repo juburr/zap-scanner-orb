@@ -1,0 +1,34 @@
+description: >
+  Scan an application that requires a token, such as an API key or a bearer token generated earlier in the job.
+  Store the value in a context and pass only the name of its environment variable, so the secret never appears in
+  config, the generated plan, or the reports. The header is only sent to the target's host by default.
+
+usage:
+  version: 2.1
+  orbs:
+    zap-scanner-orb: juburr/zap-scanner-orb@0
+  jobs:
+    api-dast:
+      docker:
+        - image: cimg/openjdk:21.0
+      steps:
+        - checkout
+        - zap-scanner-orb/install:
+            verify_checksums: strict
+        - run:
+            name: Start the API
+            command: ./scripts/start-api.sh
+            background: true
+        - zap-scanner-orb/scan:
+            scan_type: api
+            target: http://localhost:8080
+            api_definition: openapi.yaml
+            auth_header: X-Api-Key
+            auth_header_value: DAST_API_KEY
+            fail_on: high
+  workflows:
+    security:
+      jobs:
+        - api-dast:
+            # Provides the DAST_API_KEY environment variable.
+            context: dast-credentials

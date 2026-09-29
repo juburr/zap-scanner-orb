@@ -165,6 +165,9 @@ step.
 | `fail_on` | `medium` | Fail on alerts at or above `high`, `medium`, `low`, or `info`, or `never`. |
 | `spider_minutes` | `1` | Spider time limit for `baseline` and `full` scans, or `0` for none. |
 | `active_scan_minutes` | `10` | Active scan time limit for `full` and `api` scans, or `0` for none. |
+| `auth_header_value` | `ZAP_AUTH_HEADER_VALUE` | Name of the environment variable holding the header value. |
+| `auth_header` | `Authorization` | Header that carries the value. |
+| `auth_header_site` | host of `target` | Only send the header to sites whose name contains this. |
 | `wait_for_target` | `60` | Seconds to wait for `target` to respond before scanning, or `0` to skip. |
 | `max_memory` | `1g` | Maximum Java heap size for ZAP. |
 | `report_dir` | `/tmp/zap-reports` | Absolute directory for the reports, plan, and ZAP log. |
@@ -172,8 +175,8 @@ step.
 | `extra_options` | | Additional `zap.sh` options, split on whitespace. |
 | `no_output_timeout` | `30m` | How long the scan may run silently before CircleCI stops it. |
 
-Environment variables are expanded in `target`, `api_definition`, `plan`, and
-`extra_options`. `report_dir` is passed to `store_artifacts` as is, so it must
+Environment variables are expanded in `target`, `api_definition`, `plan`,
+`auth_header`, `auth_header_site`, and `extra_options`. `report_dir` is passed to `store_artifacts` as is, so it must
 be a literal path.
 
 **Results.** `report_dir` receives `report.html`, `report.json`, and
@@ -184,6 +187,40 @@ keep all of their reports. The step prints the number of alerts at each risk lev
 at or above `fail_on`. It also fails if ZAP reports a plan error, such as the
 target refusing connections. Alerts are counted by type, so one missing header
 on 50 pages is one alert.
+
+**Authentication.** If the application accepts a token in a header, such as
+an API key or a bearer token, store it in a
+[context](https://circleci.com/docs/contexts/) or project environment variable
+and pass that variable's name as `auth_header_value`:
+
+```yaml
+- zap/scan:
+    target: http://localhost:8080
+    auth_header: X-Api-Key          # Default: Authorization
+    auth_header_value: DAST_API_KEY # The value might be "Bearer <token>" for Authorization
+```
+
+ZAP then adds the header to every request it makes to `auth_header_site`,
+including the spider, the active scan, and fetching an `api_definition` URL.
+This uses ZAP's
+[authentication environment variables](https://www.zaproxy.org/docs/getting-further/authentication/handling-auth-yourself/),
+so it also works with custom plans. Setting `ZAP_AUTH_HEADER_VALUE`,
+`ZAP_AUTH_HEADER`, or `ZAP_AUTH_HEADER_SITE` in a context works too, and the
+parameters take precedence over them.
+
+- The value is never printed, and never written to the plan, the reports, or
+  ZAP's command line. Only the ZAP process receives it, in its environment.
+- `auth_header_site` defaults to the host of `target`, so the header isn't sent
+  to other hosts the scan reaches, such as the `servers` of an OpenAPI
+  definition. ZAP matches any site whose name contains the value, so
+  `example.com` also matches `api.example.com`. A custom plan without a
+  `target` must set `auth_header_site`.
+- If `auth_header_value` names a variable other than the default and it is
+  empty, the step fails rather than silently scanning without authentication.
+  This happens, for example, when a context isn't attached to the job, or for
+  a pull request from a fork.
+- The token must stay valid for the whole scan. For login forms or tokens that
+  expire, configure authentication in a custom plan instead.
 
 **Custom plans.** Set `plan` to run your own plan, for example one with
 authentication configured, exported from the ZAP desktop app. The plan can
@@ -211,6 +248,8 @@ killed on smaller resource classes.
 | `... already exists and is not empty` | Choose a different `install_path`, or remove the directory first. |
 | `zap.sh was not found on the PATH` | Run `install` earlier in the same job as `scan`. |
 | `... did not respond within ...s` | Check that the application started and listens on the `target` host and port, or raise `wait_for_target`. |
+| `auth_header_value names $... which is unset or empty` | Attach the context that defines the variable to the job, or check its name. |
+| Authenticated pages are missing from the reports | Check that `auth_header_site` matches the host in `target`, and that the token hasn't expired. |
 | `alert type(s) at or above fail_on` | Review `report.html` in the job's artifacts, then fix the findings or raise `fail_on`. |
 | `ZAP scan failed (exit code 1)` | Look for "Automation plan failures" in the output. The target may be unreachable. |
 | ZAP is killed, or runs out of memory | Raise `max_memory`, or use a larger `resource_class`. |
@@ -264,6 +303,9 @@ requires all of them to pass:
   `upstream_checksums.txt`, and that every pinned version is tested.
 - The `scan` command running baseline, full, api, and custom plan scans of an
   nginx service container, plus a baseline scan with ZAP 2.12.0 on Java 11.
+- Authenticated scans of an nginx container that requires an `X-Api-Key`
+  header, on ZAP 2.17.0 and 2.12.0. These check that the header reaches only
+  `auth_header_site` and that its value never appears in the outputs.
 - `.circleci/scripts/scan_script_tests.sh`, which runs the scan script against
   a fake `zap.sh` to cover validation, plan generation, and result handling,
   then runs real scans of each type.
