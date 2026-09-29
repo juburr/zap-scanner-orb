@@ -139,6 +139,7 @@ run_scan() {
         PARAM_API_DEFINITION="" \
         PARAM_PLAN="" \
         PARAM_FAIL_ON="medium" \
+        PARAM_IGNORE_RULES="" \
         PARAM_SPIDER_MINUTES="1" \
         PARAM_ACTIVE_SCAN_MINUTES="10" \
         PARAM_AUTH_HEADER_VALUE="ZAP_AUTH_HEADER_VALUE" \
@@ -274,6 +275,75 @@ run_scan FAKE_REPORT="${WORK}/report-none.json" PARAM_SCAN_TYPE="api" \
 check "exit code is zero" rc_is_zero
 check "imports the definition by URL" file_has "${FAKE_STATE}/plan" "apiUrl: 'https://example.com/openapi.json'"
 check "does not treat it as a file" file_lacks "${FAKE_STATE}/plan" "apiFile"
+end
+
+# Prints the line number of the first plan line matching the fixed string, or
+# nothing if there is none.
+plan_line() {
+    grep -nF -- "$1" "${FAKE_STATE}/plan" 2> /dev/null | head -n 1 | cut -d: -f1
+}
+
+# Succeeds if the fixed string $1 first appears on an earlier plan line than $2.
+plan_order() {
+    local first second
+    first=$(plan_line "$1")
+    second=$(plan_line "$2")
+    [[ -n "${first}" ]] && [[ -n "${second}" ]] && [[ "${first}" -lt "${second}" ]]
+}
+
+# Succeeds if the plan's alert filters are exactly these rule IDs, in order.
+filtered_rules_are() {
+    diff <(printf '%s\n' "$@") <(sed -n 's/^      - ruleId: //p' "${FAKE_STATE}/plan") > /dev/null
+}
+
+expect_rejected "a non-numeric rule in ignore_rules" \
+    "Invalid rule 'abc' in ignore_rules. Expected a ZAP scan rule ID such as 10020." \
+    PARAM_IGNORE_RULES="10020, abc"
+expect_rejected "an alert reference in ignore_rules" "Invalid rule '10038-1' in ignore_rules" \
+    PARAM_IGNORE_RULES="10038-1"
+expect_rejected "an overlong rule ID in ignore_rules" "Invalid rule '1234567890' in ignore_rules" \
+    PARAM_IGNORE_RULES="1234567890"
+expect_rejected "a glob in ignore_rules" "Invalid rule '*' in ignore_rules" PARAM_IGNORE_RULES="*"
+
+begin "generates no alert filter by default"
+run_scan FAKE_REPORT="${WORK}/report-none.json"
+check "exit code is zero" rc_is_zero
+check "has no alertFilter job" file_lacks "${FAKE_STATE}/plan" "alertFilter"
+check "reports every confidence" file_lacks "${FAKE_STATE}/plan" "confidences"
+check "printed no ignored rules" output_lacks "IGNORE_RULES"
+end
+
+begin "generates no alert filter for separators alone"
+run_scan FAKE_REPORT="${WORK}/report-none.json" PARAM_IGNORE_RULES=" , ,, "
+check "exit code is zero" rc_is_zero
+check "has no alertFilter job" file_lacks "${FAKE_STATE}/plan" "alertFilter"
+end
+
+begin "ignores rules with an alert filter"
+run_scan FAKE_REPORT="${WORK}/report-none.json" PARAM_IGNORE_RULES=$'10020, 10038\t10020,,010021 '
+check "exit code is zero" rc_is_zero
+check "filters each rule once, without leading zeros" filtered_rules_are 10020 10038 10021
+check "marks them as false positives" test "$(grep -cxF "        newRisk: 'False Positive'" "${FAKE_STATE}/plan")" -eq 3
+check "filters before the passive scan is configured" plan_order "type: alertFilter" "type: passiveScan-config"
+check "filters before spidering" plan_order "type: alertFilter" "type: spider"
+check "has no deleteGlobalAlerts, which ZAP 2.12.0 rejects" file_lacks "${FAKE_STATE}/plan" "deleteGlobalAlerts"
+check "leaves false positives out of every report" \
+    test "$(grep -cxF "    confidences: [high, medium, low]" "${FAKE_STATE}/plan")" -eq 3
+check "printed the ignored rules" output_has "IGNORE_RULES: 10020 10038 10021"
+end
+
+begin "ignores rules in api scans before importing the definition"
+run_scan FAKE_REPORT="${WORK}/report-none.json" PARAM_SCAN_TYPE="api" \
+    PARAM_API_DEFINITION="https://example.com/openapi.json" PARAM_IGNORE_RULES="40012"
+check "exit code is zero" rc_is_zero
+check "filters the rule" filtered_rules_are 40012
+check "filters before importing" plan_order "type: alertFilter" "type: openapi"
+end
+
+begin "ignores rules in full scans before the active scan"
+run_scan FAKE_REPORT="${WORK}/report-none.json" PARAM_SCAN_TYPE="full" PARAM_IGNORE_RULES="40012"
+check "exit code is zero" rc_is_zero
+check "filters before the active scan" plan_order "type: alertFilter" "type: activeScan"
 end
 
 begin "warns that api_definition is unused outside api scans"
@@ -563,6 +633,15 @@ check "exported ZAP_TARGET" test "$(sed -n 1p "${FAKE_STATE}/env")" = "http://12
 check "exported ZAP_REPORT_DIR" test "$(sed -n 2p "${FAKE_STATE}/env")" = "${REPORTS}"
 check "did not copy the plan into the reports" test ! -e "${REPORTS}/plan.yaml"
 check "still summarized report.json" output_has "Alerts: 1 high"
+end
+
+begin "custom plan with ignore_rules"
+run_scan FAKE_REPORT="${WORK}/report-none.json" PARAM_PLAN="${FIXTURES}/custom-plan.yaml" \
+    PARAM_IGNORE_RULES="10020"
+check "exit code is zero" rc_is_zero
+check "warned" output_has "'ignore_rules' is ignored when a custom plan is provided. Add an alertFilter job to the plan instead."
+check "ran the plan unchanged" diff -q "${FIXTURES}/custom-plan.yaml" "${FAKE_STATE}/plan"
+check "printed no ignored rules" output_lacks "IGNORE_RULES:"
 end
 
 begin "custom plan without a target or report"

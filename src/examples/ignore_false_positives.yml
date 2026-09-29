@@ -1,0 +1,27 @@
+description: >
+  Ignore scan rules that raise false positives for your application, so the job still fails on everything else at
+  or above fail_on. Their alerts are marked as false positives and left out of the reports. Find each rule's ID in
+  the "Plugin Id" of report.html, and note why it is ignored so the list can be revisited.
+
+usage:
+  version: 2.1
+  orbs:
+    zap-scanner-orb: juburr/zap-scanner-orb@0
+  jobs:
+    dast:
+      docker:
+        - image: cimg/openjdk:21.0
+        - image: bkimminich/juice-shop:latest
+      steps:
+        - zap-scanner-orb/install:
+            verify_checksums: strict
+        - zap-scanner-orb/scan:
+            target: http://localhost:3000
+            fail_on: medium
+            # 10020 Missing Anti-clickjacking Header and 10038 CSP Header Not Set: both
+            # headers are added by the reverse proxy in production, which CI scans bypass.
+            ignore_rules: "10020, 10038"
+  workflows:
+    security:
+      jobs:
+        - dast
