@@ -21,7 +21,7 @@ welcome!
 
 Info for security teams:
 - Required external access to allow, if running a locked down, self-hosted CircleCI pipeline on-prem:
-  - `github.com` and `objects.githubusercontent.com`: For download and installation of ZAP.
+  - `github.com`, `release-assets.githubusercontent.com`, and `objects.githubusercontent.com`: For download and installation of ZAP. GitHub redirects release downloads to one of the latter two.
   - Scans only contact the target, plus the `api_definition` URL if one is given. Every add-on the scans use is bundled with the ZAP release, so nothing is downloaded at scan time.
 
 ## Requirements
@@ -267,7 +267,7 @@ killed on smaller resource classes.
 | `ignores JAVA_HOME, so java must be on the PATH` | Add `$JAVA_HOME/bin` to the `PATH` for ZAP releases before 2.17.0. |
 | `requires Java 17 or newer, but found Java ...` | Upgrade the executor's Java, or point `JAVA_HOME` at a newer runtime. |
 | `only runs on Java 7 or 8` | Use `cimg/openjdk:8.0` for ZAP 2.5.0 and older, or pick a newer ZAP. |
-| `Unable to download ZAP ...` | The version was never released, or is no longer hosted by the ZAP project. |
+| `Unable to download ZAP ...` | After a 404, the version was never released, or is no longer hosted by the ZAP project. After 5xx errors, GitHub was unavailable for several minutes, so re-run the job. |
 | `No checksum available for version ... and strict mode is enabled` | Upgrade the orb, or temporarily use `verify_checksums: known_versions`. |
 | `... already exists and is not empty` | Choose a different `install_path`, or remove the directory first. |
 | `zap.sh was not found on the PATH` | Run `install` earlier in the same job as `scan`. |

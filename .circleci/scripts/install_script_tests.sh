@@ -297,12 +297,14 @@ check "nothing downloaded" dir_is_empty "${WORK}/javahome-only-dl"
 end
 
 begin "fails cleanly for a version that was never published"
+start=${SECONDS}
 run_install PARAM_VERSION="9.9.9" PARAM_VERIFY_CHECKSUMS=known_versions ZAP_ORB_DOWNLOAD_DIR="${WORK}/missing-dl" \
     PARAM_INSTALL_PATH="${WORK}/missing/zap" PARAM_BIN_PATH="${WORK}/missing/bin"
 check "exit code is non-zero" rc_is_nonzero
 check "tried the main repository" output_has "https://github.com/zaproxy/zaproxy/releases/download/v9.9.9/"
 check "tried zap-archive" output_has "https://github.com/zaproxy/zap-archive/releases/download/zap-v9.9.9/"
 check "explained the failure" output_has "Unable to download ZAP 9.9.9"
+check "gave up promptly, since a 404 is not retried" test $((SECONDS - start)) -le 30
 check "no partial download left" dir_is_empty "${WORK}/missing-dl"
 check "nothing installed" test ! -e "${WORK}/missing/zap"
 end

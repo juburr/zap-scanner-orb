@@ -225,6 +225,18 @@ sha512_of() {
     sha512sum "$1" | awk '{ print $1 }'
 }
 
+# GitHub's release downloads sometimes return 5xx errors for minutes at a
+# time, so transient failures are retried with backoff for three to four
+# minutes. A 404 is not retried, so a release that has moved to zap-archive
+# still falls through to it promptly. curl backs off exponentially from 1s;
+# wget backs off linearly, and only retries HTTP errors from 1.19.1, which
+# added --retry-on-http-error.
+CURL_RETRY_ARGS=(--retry 8 --retry-max-time 300 --retry-connrefused --connect-timeout 30)
+WGET_RETRY_ARGS=(--tries=20 --waitretry=30 --retry-connrefused --timeout=60)
+if [[ "${DOWNLOADER}" == "wget" ]] && wget --help 2>&1 | grep -q -- "--retry-on-http-error"; then
+    WGET_RETRY_ARGS+=("--retry-on-http-error=429,500,502,503,504")
+fi
+
 # Tries each URL in turn. Download to a temporary name so an interrupted
 # transfer is never cached.
 download() {
@@ -234,18 +246,19 @@ download() {
     for url in "$@"; do
         echo "Downloading ${url}..."
         if [[ "${DOWNLOADER}" == "curl" ]]; then
-            if curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused "${url}" -o "${dest}.partial"; then
+            if curl -fsSL "${CURL_RETRY_ARGS[@]}" "${url}" -o "${dest}.partial"; then
                 mv "${dest}.partial" "${dest}"
                 return 0
             fi
-        elif wget -q --tries=5 --waitretry=2 "${url}" -O "${dest}.partial"; then
+        elif wget -q "${WGET_RETRY_ARGS[@]}" "${url}" -O "${dest}.partial"; then
             mv "${dest}.partial" "${dest}"
             return 0
         fi
         echo "Not available from ${url}."
     done
     rm -f "${dest}.partial"
-    echo "ERROR: Unable to download ZAP ${VERSION}. Confirm that it is a published ZAP release."
+    echo "ERROR: Unable to download ZAP ${VERSION}. Either it is not a published ZAP release, or GitHub"
+    echo "ERROR: kept failing (see the HTTP errors above), in which case re-run the job later."
     exit 1
 }
 

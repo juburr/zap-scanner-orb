@@ -104,7 +104,7 @@ fi
 DOWNLOADED="false"
 for release in "${RELEASES[@]}"; do
   read -r repo tag <<< "${release}"
-  if curl -fsSL --retry 3 "https://github.com/${repo}/releases/download/${tag}/${TARBALL}" -o "${WORK_DIR}/${TARBALL}" 2> /dev/null; then
+  if curl -fsSL --retry 8 --retry-max-time 300 --retry-connrefused "https://github.com/${repo}/releases/download/${tag}/${TARBALL}" -o "${WORK_DIR}/${TARBALL}" 2> /dev/null; then
     DOWNLOADED="true"
     break
   fi
