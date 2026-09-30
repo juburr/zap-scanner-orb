@@ -1,0 +1,28 @@
+description: >
+  Scan an application from Red Hat's UBI 8 OpenJDK image. The image includes Java but not gzip, which the install
+  command needs, and its default user (uid 185) can't install packages, so this job runs as root. To stay
+  unprivileged instead, build an image from it that adds gzip with microdnf, and run that as uid 185.
+
+usage:
+  version: 2.1
+  orbs:
+    zap-scanner-orb: juburr/zap-scanner-orb@0
+  jobs:
+    dast:
+      docker:
+        - image: registry.access.redhat.com/ubi8/openjdk-21:latest
+          user: root
+        - image: bkimminich/juice-shop:latest
+      steps:
+        - run:
+            name: Install gzip
+            command: microdnf install -y gzip
+        - zap-scanner-orb/install:
+            verify_checksums: strict
+        - zap-scanner-orb/scan:
+            target: http://localhost:3000
+            fail_on: medium
+  workflows:
+    security:
+      jobs:
+        - dast
