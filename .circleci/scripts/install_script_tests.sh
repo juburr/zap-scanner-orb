@@ -102,7 +102,6 @@ output_has() { grep -qF -- "$1" <<< "${OUTPUT}"; }
 output_lacks() { ! grep -qF -- "$1" <<< "${OUTPUT}"; }
 dir_is_empty() { [[ ! -d "$1" ]] || [[ -z "$(ls -A "$1")" ]]; }
 no_staging_dirs() { [[ -z "$(find "$1" -maxdepth 1 -name '.zap-install.*' 2> /dev/null)" ]]; }
-
 # Builds a directory of symlinks to only the named tools, for tests that need
 # a PATH without java, curl, or wget.
 make_sandbox_path() {
@@ -394,6 +393,7 @@ run_install PATH="${WORK}/sandbox-nojava" JAVA_HOME="" ZAP_ORB_DOWNLOAD_DIR="${W
     PARAM_INSTALL_PATH="${WORK}/nojava/zap" PARAM_BIN_PATH="${WORK}/nojava/bin"
 check "exit code is non-zero" rc_is_nonzero
 check "explained the failure" output_has "no java executable was found"
+check "explained how to install Java on UBI" output_has "dnf install -y java-21-openjdk-headless"
 check "nothing downloaded" dir_is_empty "${WORK}/nojava-dl"
 end
 
@@ -420,6 +420,23 @@ check "exit code is non-zero" rc_is_nonzero
 check "explained the failure" output_has "Unable to determine the Java version"
 check "nothing installed" test ! -e "${WORK}/javabad-install/zap"
 end
+
+# Red Hat's ubi8/ubi-minimal image lacks both, and its ubi8/openjdk images lack gzip.
+for missing_tool in tar gzip; do
+    begin "fails before downloading when ${missing_tool} is missing"
+    sandbox_tools=()
+    for tool in "${BASE_TOOLS[@]}" java curl wget; do
+        [[ "${tool}" != "${missing_tool}" ]] && sandbox_tools+=("${tool}")
+    done
+    make_sandbox_path "${WORK}/sandbox-no-${missing_tool}" "${sandbox_tools[@]}"
+    run_install PATH="${WORK}/sandbox-no-${missing_tool}" ZAP_ORB_DOWNLOAD_DIR="${WORK}/no-${missing_tool}-dl" \
+        PARAM_INSTALL_PATH="${WORK}/no-${missing_tool}/zap" PARAM_BIN_PATH="${WORK}/no-${missing_tool}/bin"
+    check "exit code is non-zero" rc_is_nonzero
+    check "named the missing tool" output_has "Required tool '${missing_tool}' is not available."
+    check "explained how to fix it" output_has "Install it in an earlier step"
+    check "nothing downloaded" dir_is_empty "${WORK}/no-${missing_tool}-dl"
+    end
+done
 
 begin "fails when neither curl nor wget is available"
 make_sandbox_path "${WORK}/sandbox-nodl" "${BASE_TOOLS[@]}" java

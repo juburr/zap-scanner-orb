@@ -139,6 +139,7 @@ fi
 for tool in tar gzip sha512sum sort cut; do
     if ! command -v "${tool}" &> /dev/null; then
         echo "ERROR: Required tool '${tool}' is not available."
+        echo "ERROR: Install it in an earlier step, for example with 'microdnf install -y ${tool}' on Red Hat UBI images."
         exit 1
     fi
 done
@@ -157,6 +158,7 @@ if ! command -v "${JAVA_BIN}" &> /dev/null; then
         echo "ERROR: ZAP ${VERSION} ignores JAVA_HOME, so java must be on the PATH."
     else
         echo "ERROR: Use an executor that includes Java, such as cimg/openjdk:21.0, or set JAVA_HOME."
+        echo "ERROR: On Red Hat UBI images, install one in an earlier step with 'dnf install -y java-21-openjdk-headless' (microdnf on ubi-minimal)."
     fi
     exit 1
 fi
