@@ -55,8 +55,11 @@ commands:
             # The cleanup step must remove the downloaded archive.
             test ! -e /tmp/zap-orb-download
 
-            # Staging directories must never be left beside the install.
-            test -z "$(find "$(dirname "${expected_install}")" -maxdepth 1 -name '.zap-install.*')"
+            # Staging directories must never be left beside the install. Checked
+            # with a glob, since ubi-minimal doesn't ship find.
+            if compgen -G "$(dirname "${expected_install}")/.zap-install.*" > /dev/null; then
+              echo "a staging directory was left beside ${expected_install}"; exit 1
+            fi
 
             zap.sh -cmd -version | tee /tmp/zap-version.txt
             test "$(tail -n 1 /tmp/zap-version.txt)" = "<< parameters.version >>"
@@ -426,6 +429,107 @@ jobs:
           verify_checksums: strict
       - verify-install
 
+  ubi:
+    description: >
+      Installs Java and any other missing prerequisites on a Red Hat UBI image
+      with the image's own package manager, as the README describes, then
+      installs ZAP and scans an nginx service container.
+    parameters:
+      image:
+        description: Image under registry.access.redhat.com, such as ubi8/ubi:latest.
+        type: string
+      setup:
+        description: Command that installs the prerequisites the image lacks.
+        type: string
+      java:
+        description: Java version the image provides once set up, such as 21 or 1.8.
+        type: string
+      resource_class:
+        type: string
+        default: medium
+      version:
+        type: string
+        default: "2.17.0"
+      caching:
+        type: boolean
+        default: true
+      scan:
+        type: boolean
+        default: true
+    docker:
+      - image: registry.access.redhat.com/<< parameters.image >>
+        # The UBI OpenJDK images run as uid 185, which can't install packages.
+        user: root
+      - image: nginx:stable-alpine
+    resource_class: << parameters.resource_class >>
+    steps:
+      - run:
+          name: Install prerequisites
+          command: << parameters.setup >>
+      - run:
+          name: Verify the Red Hat Java is in use
+          command: |
+            set -euo pipefail
+            cat /etc/redhat-release
+            id
+            echo "HOME=${HOME}"
+            echo "JAVA_HOME=${JAVA_HOME:-}"
+            java_bin="${JAVA_HOME:+${JAVA_HOME}/bin/}java"
+            "${java_bin}" -version 2>&1 | tee /tmp/java-version.txt
+            case "$(readlink -f "$(command -v "${java_bin}")")" in
+              /usr/lib/jvm/*) ;;
+              *) echo "expected ${java_bin} to be a Red Hat OpenJDK package under /usr/lib/jvm"; exit 1 ;;
+            esac
+            grep -qE 'version "<< parameters.java >>[."]' /tmp/java-version.txt \
+              || { echo "expected Java << parameters.java >>"; exit 1; }
+      - zap-scanner-orb/install:
+          caching: << parameters.caching >>
+          verify_checksums: strict
+          version: << parameters.version >>
+      - verify-install:
+          version: << parameters.version >>
+      - when:
+          condition: << parameters.scan >>
+          steps:
+            - zap-scanner-orb/scan:
+                target: http://localhost/
+                fail_on: high
+            - run:
+                name: Verify the reports
+                command: |
+                  set -euo pipefail
+                  for report in report.html report.json report.md plan.yaml zap.log; do
+                    test -s "/tmp/zap-reports/${report}" || { echo "missing ${report}"; exit 1; }
+                  done
+                  grep -qF "Missing Anti-clickjacking Header" /tmp/zap-reports/report.json \
+                    || { echo "report.json lacks the expected alert"; exit 1; }
+
+  script-tests-ubi8:
+    description: >
+      Runs the install and scan script tests on Red Hat UBI 8, exercising the
+      scripts against RHEL's userland and its OpenJDK packages.
+    docker:
+      - image: registry.access.redhat.com/ubi8/ubi:latest
+      - image: nginx:stable-alpine
+    steps:
+      - run:
+          name: Install Java, and the tools checkout and the tests need
+          # The tests use wget for their wget fallback case, diff and cmp
+          # (diffutils) for comparisons, and python3 and openssl to serve HTTPS
+          # with a self-signed certificate. The orb itself needs none of them.
+          command: dnf install -y java-21-openjdk-headless git-core openssh-clients wget diffutils python3 openssl
+      - checkout
+      - restore_cache:
+          key: zap-scanner-orb-v1-2.17.0
+      - run:
+          name: Run install script tests
+          command: SEED_ARCHIVE=/tmp/zap-orb-download/zap.tar.gz bash .circleci/scripts/install_script_tests.sh
+      - zap-scanner-orb/install:
+          verify_checksums: strict
+      - run:
+          name: Run scan script tests
+          command: SCAN_TARGET=http://localhost/ bash .circleci/scripts/scan_script_tests.sh
+
   install-cache-roundtrip:
     description: >
       Verifies the archive saved by earlier installs is restored from the cache,
@@ -616,6 +720,101 @@ workflows:
             parameters:
               resource_class: [medium, arm.medium]
           filters: *filters
+      # Red Hat UBI, with Java and any other missing tools installed from the
+      # UBI repositories rather than preinstalled as on cimg/openjdk.
+      - ubi:
+          name: ubi8-java21
+          image: ubi8/ubi:latest
+          setup: dnf install -y java-21-openjdk-headless
+          java: "21"
+          filters: *filters
+      - ubi:
+          name: ubi8-java21-arm64
+          image: ubi8/ubi:latest
+          setup: dnf install -y java-21-openjdk-headless
+          java: "21"
+          resource_class: arm.medium
+          filters: *filters
+      - ubi:
+          name: ubi8-java17
+          image: ubi8/ubi:latest
+          setup: dnf install -y java-17-openjdk-headless
+          java: "17"
+          filters: *filters
+      # The oldest release the scan command supports, on the oldest Java it supports.
+      - ubi:
+          name: ubi8-java11-2.12.0
+          image: ubi8/ubi:latest
+          setup: dnf install -y java-11-openjdk-headless
+          java: "11"
+          version: "2.12.0"
+          caching: false
+          filters: *filters
+      # The newest release that only runs on Java 7 or 8, whose launcher parses
+      # the 1.8 version itself. Scanning needs a newer ZAP.
+      - ubi:
+          name: ubi8-java8-2.5.0
+          image: ubi8/ubi:latest
+          setup: dnf install -y java-1.8.0-openjdk-headless
+          java: "1.8"
+          version: "2.5.0"
+          caching: false
+          scan: false
+          filters: *filters
+      # With several Java packages installed, alternatives defaults to Java 8.
+      - ubi:
+          name: ubi8-java8-and-21-java-home
+          image: ubi8/ubi:latest
+          setup: |
+            dnf install -y java-1.8.0-openjdk-headless java-21-openjdk-headless
+            echo 'export JAVA_HOME=/usr/lib/jvm/jre-21' >> "${BASH_ENV}"
+          java: "21"
+          filters: *filters
+      # Releases before 2.17.0 ignore JAVA_HOME.
+      - ubi:
+          name: ubi8-java8-and-21-alternatives-2.16.1
+          image: ubi8/ubi:latest
+          setup: |
+            dnf install -y java-1.8.0-openjdk-headless java-21-openjdk-headless
+            alternatives --set java "$(readlink -f /usr/lib/jvm/jre-21/bin/java)"
+          java: "21"
+          version: "2.16.1"
+          caching: false
+          filters: *filters
+      # ubi-minimal also lacks tar and gzip.
+      - ubi:
+          name: ubi8-minimal-java21
+          image: ubi8/ubi-minimal:latest
+          setup: microdnf install -y tar gzip java-21-openjdk-headless
+          java: "21"
+          filters: *filters
+      # Red Hat's OpenJDK images include Java and tar, but not gzip.
+      - ubi:
+          name: ubi8-openjdk-21
+          image: ubi8/openjdk-21:latest
+          setup: microdnf install -y gzip
+          java: "21"
+          filters: *filters
+      - ubi:
+          name: ubi8-openjdk-17-runtime
+          image: ubi8/openjdk-17-runtime:latest
+          setup: microdnf install -y gzip
+          java: "17"
+          filters: *filters
+      - ubi:
+          name: ubi9-java21
+          image: ubi9/ubi:latest
+          setup: dnf install -y java-21-openjdk-headless
+          java: "21"
+          filters: *filters
+      - ubi:
+          name: ubi9-openjdk-21
+          image: ubi9/openjdk-21:latest
+          setup: microdnf install -y gzip
+          java: "21"
+          filters: *filters
+      - script-tests-ubi8:
+          filters: *filters
       - install-cache-roundtrip:
           # The 2.17.0 installs populate the cache this job restores.
           requires: [install-java-matrix]
@@ -657,5 +856,18 @@ workflows:
             - scan-ignore-rules-2.12.0
             - scan-custom-plan
             - scan-script-tests
+            - ubi8-java21
+            - ubi8-java21-arm64
+            - ubi8-java17
+            - ubi8-java11-2.12.0
+            - ubi8-java8-2.5.0
+            - ubi8-java8-and-21-java-home
+            - ubi8-java8-and-21-alternatives-2.16.1
+            - ubi8-minimal-java21
+            - ubi8-openjdk-21
+            - ubi8-openjdk-17-runtime
+            - ubi9-java21
+            - ubi9-openjdk-21
+            - script-tests-ubi8
           context: orb-publishing
           filters: *release-filters

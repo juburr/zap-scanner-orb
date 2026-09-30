@@ -28,7 +28,8 @@ Info for security teams:
 
 - A Linux executor (Docker or machine), on amd64 or arm64.
 - A Java runtime compatible with the ZAP version (see below). ZAP's Linux
-  release does not bundle one; the `cimg/openjdk` images work out of the box.
+  release does not bundle one; the `cimg/openjdk` images work out of the box,
+  and [Red Hat UBI images](#red-hat-ubi-images) need Java installed first.
   From ZAP 2.17.0 onward, `JAVA_HOME` is honored when set. Earlier releases'
   launchers ignore `JAVA_HOME` and require `java` on the `PATH`, and the orb
   checks whichever Java the release will actually use.
@@ -42,12 +43,12 @@ the version against the minimum declared by the ZAP release being installed.
 Every ZAP release still hosted by the ZAP project can be installed with
 `verify_checksums: strict`:
 
-| ZAP version | Java | Executor example |
-|---|---|---|
-| 2.16.0 – 2.17.0 | 17 or newer | `cimg/openjdk:21.0` |
-| 2.12.0 – 2.15.0 | 11 or newer | `cimg/openjdk:21.0` |
-| 2.7.0 – 2.11.1 | 8 or newer | `cimg/openjdk:21.0` |
-| 2.4.0, 2.4.2, 2.4.3, 2.5.0 | 7 or 8 only | `cimg/openjdk:8.0` |
+| ZAP version | Java | Executor example | Red Hat UBI 8 package |
+|---|---|---|---|
+| 2.16.0 – 2.17.0 | 17 or newer | `cimg/openjdk:21.0` | `java-21-openjdk-headless` |
+| 2.12.0 – 2.15.0 | 11 or newer | `cimg/openjdk:21.0` | `java-21-openjdk-headless` |
+| 2.7.0 – 2.11.1 | 8 or newer | `cimg/openjdk:21.0` | `java-21-openjdk-headless` |
+| 2.4.0, 2.4.2, 2.4.3, 2.5.0 | 7 or 8 only | `cimg/openjdk:8.0` | `java-1.8.0-openjdk-headless` |
 
 The `scan` command requires ZAP 2.12.0 or newer.
 
@@ -95,6 +96,91 @@ The scan waits for the application to respond, spiders it, and fails the job
 if any passive scan alert is medium risk or higher. The HTML, JSON, and
 Markdown reports are stored as artifacts under `zap-reports/` whether the scan
 passes or fails.
+
+## Red Hat UBI Images
+
+The orb runs on Red Hat [Universal Base Images](https://catalog.redhat.com/software/base-images)
+(UBI) 8 and 9. Unlike `cimg/openjdk`, these images lack some of what the orb
+needs, so install the missing packages from the UBI repositories in a step
+before `install`.
+
+| Image | Missing | Setup step |
+|---|---|---|
+| `ubi8/ubi`, `ubi9/ubi` | Java | `dnf install -y java-21-openjdk-headless` |
+| `ubi8/ubi-minimal`, `ubi9/ubi-minimal` | Java, `tar`, `gzip` | `microdnf install -y tar gzip java-21-openjdk-headless` |
+| `ubi8/openjdk-17`, `ubi8/openjdk-21`, `ubi9/openjdk-17`, `ubi9/openjdk-21`, and their `-runtime` variants | `gzip` | `microdnf install -y gzip`, as root (see below) |
+
+The headless Java packages are enough for scans, including their HTML reports.
+See [Supported ZAP versions](#supported-zap-versions) for the package to use
+with older ZAP releases.
+
+```yaml
+jobs:
+  dast:
+    docker:
+      - image: registry.access.redhat.com/ubi8/ubi:latest
+      - image: bkimminich/juice-shop:latest
+    steps:
+      - run:
+          name: Install Java
+          command: dnf install -y java-21-openjdk-headless
+      - zap/install:
+          verify_checksums: strict
+      - zap/scan:
+          target: http://localhost:3000
+```
+
+**Red Hat's OpenJDK images.** The `ubi8/openjdk-*` and `ubi9/openjdk-*` images
+include Java, but not `gzip`, and they run as a non-root user (uid 185) that
+can't install packages. Either run the job as root to install it:
+
+```yaml
+    docker:
+      - image: registry.access.redhat.com/ubi8/openjdk-21:latest
+        user: root
+    steps:
+      - run:
+          name: Install gzip
+          command: microdnf install -y gzip
+      - zap/install:
+          verify_checksums: strict
+```
+
+Or, to keep the job unprivileged, build your own image with `gzip` added and
+run it as uid 185:
+
+```dockerfile
+FROM registry.access.redhat.com/ubi8/openjdk-21:latest
+USER root
+RUN microdnf install -y gzip && microdnf clean all
+USER 185
+```
+
+Either way, ZAP is installed under the image's `$HOME` (`/home/jboss` on
+UBI 8, `/home/default` on UBI 9). A custom image also saves installing packages
+in every job, so it suits any of the images above.
+
+**Checking out code.** UBI images don't include `git` or `ssh`. If the job
+runs `checkout`, install them first with `dnf install -y git-core openssh-clients`
+(`microdnf` on the minimal and OpenJDK images).
+
+**Several Java versions.** When more than one Java package is installed, RHEL's
+`alternatives` system picks the `java` on the `PATH`, and it may not be the
+newest: with Java 8 and Java 21 both installed, it picks Java 8. For ZAP 2.17.0
+and newer, point `JAVA_HOME` at the Java to use:
+
+```yaml
+      - run:
+          name: Use Java 21 for ZAP
+          command: echo 'export JAVA_HOME=/usr/lib/jvm/jre-21' >> "$BASH_ENV"
+```
+
+Earlier releases ignore `JAVA_HOME`, so switch the system default instead, as
+root:
+
+```bash
+alternatives --set java "$(readlink -f /usr/lib/jvm/jre-21/bin/java)"
+```
 
 ## Commands
 
@@ -263,9 +349,10 @@ killed on smaller resource classes.
 
 | Error | Resolution |
 |---|---|
-| `no java executable was found` | Use a `cimg/openjdk` image, or set `JAVA_HOME` in an earlier step (ZAP 2.17.0+). |
+| `no java executable was found` | Use a `cimg/openjdk` image, install Java in an earlier step (see [Red Hat UBI images](#red-hat-ubi-images)), or set `JAVA_HOME` (ZAP 2.17.0+). |
+| `Required tool '...' is not available` | Install the package the error names in an earlier step. On UBI images, see [Red Hat UBI images](#red-hat-ubi-images). |
 | `ignores JAVA_HOME, so java must be on the PATH` | Add `$JAVA_HOME/bin` to the `PATH` for ZAP releases before 2.17.0. |
-| `requires Java 17 or newer, but found Java ...` | Upgrade the executor's Java, or point `JAVA_HOME` at a newer runtime. |
+| `requires Java 17 or newer, but found Java ...` | Upgrade the executor's Java, or point `JAVA_HOME` at a newer runtime. On UBI, check which Java `alternatives` selected. |
 | `only runs on Java 7 or 8` | Use `cimg/openjdk:8.0` for ZAP 2.5.0 and older, or pick a newer ZAP. |
 | `Unable to download ZAP ...` | After a 404, the version was never released, or is no longer hosted by the ZAP project. After 5xx errors, GitHub was unavailable for several minutes, so re-run the job. |
 | `No checksum available for version ... and strict mode is enabled` | Upgrade the orb, or temporarily use `verify_checksums: known_versions`. |
@@ -319,6 +406,12 @@ requires all of them to pass:
 - A headless ZAP daemon started from the install and queried over its API.
 - Machine executors on amd64 and arm64 with Java reachable only via `JAVA_HOME`.
 - A stock `eclipse-temurin` image running as root, without `/home/circleci`.
+- Red Hat UBI 8 and 9 images set up as described in
+  [Red Hat UBI images](#red-hat-ubi-images), each installing ZAP and scanning
+  an nginx service container: `ubi` with Java 11, 17, and 21 (21 on both amd64
+  and arm64), `ubi-minimal`, and the `openjdk` images run as root. Also Java 8
+  installed alongside Java 21, with 21 selected by `JAVA_HOME` or by
+  `alternatives`, and an install of ZAP 2.5.0 on UBI's Java 8.
 - Paths containing spaces and environment variables, with caching disabled.
 - Repeated invocation in one job, and a cache save/restore round trip.
 - `.circleci/scripts/install_script_tests.sh`, which runs the install script
@@ -337,6 +430,7 @@ requires all of them to pass:
 - `.circleci/scripts/scan_script_tests.sh`, which runs the scan script against
   a fake `zap.sh` to cover validation, plan generation, and result handling,
   then runs real scans of each type.
+- Both test scripts again, on UBI 8 with its own OpenJDK package.
 
 The test scripts can also be run locally with Java 17+ on the `PATH`:
 

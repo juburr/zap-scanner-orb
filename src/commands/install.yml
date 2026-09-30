@@ -3,7 +3,8 @@ description: >
   Requires a Linux executor with a Java runtime supported by the chosen ZAP version
   (Java 17 or newer for current releases, for example cimg/openjdk:21.0). From ZAP
   2.17.0 onward JAVA_HOME is honored when set; earlier releases require java on the
-  PATH. Safe to invoke more than once in a job.
+  PATH. Also requires tar and gzip. On Red Hat UBI images, install whichever of Java,
+  tar, and gzip the image lacks in an earlier step. Safe to invoke more than once in a job.
   This command should be invoked prior to calling any other commands.
 parameters:
   caching:

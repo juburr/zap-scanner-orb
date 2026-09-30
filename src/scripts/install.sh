@@ -138,7 +138,12 @@ fi
 
 for tool in tar gzip sha512sum sort cut; do
     if ! command -v "${tool}" &> /dev/null; then
+        case "${tool}" in
+            tar | gzip) package="${tool}" ;;
+            *) package="coreutils" ;;
+        esac
         echo "ERROR: Required tool '${tool}' is not available."
+        echo "ERROR: Install it in an earlier step, for example with 'microdnf install -y ${package}' on Red Hat UBI images."
         exit 1
     fi
 done
@@ -158,6 +163,12 @@ if ! command -v "${JAVA_BIN}" &> /dev/null; then
     else
         echo "ERROR: Use an executor that includes Java, such as cimg/openjdk:21.0, or set JAVA_HOME."
     fi
+    # Releases before 2.6.0 only run on Java 7 or 8.
+    java_package="java-21-openjdk-headless"
+    if version_lt "${VERSION}" "2.6.0"; then
+        java_package="java-1.8.0-openjdk-headless"
+    fi
+    echo "ERROR: On Red Hat UBI images, install one in an earlier step with 'dnf install -y ${java_package}' (microdnf on ubi-minimal)."
     exit 1
 fi
 
