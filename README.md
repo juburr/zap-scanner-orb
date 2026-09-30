@@ -102,8 +102,7 @@ passes or fails.
 The orb runs on Red Hat [Universal Base Images](https://catalog.redhat.com/software/base-images)
 (UBI) 8 and 9. Unlike `cimg/openjdk`, these images lack some of what the orb
 needs, so install the missing packages from the UBI repositories in a step
-before `install`. That step has to come first because `install` restores its
-cache, which also needs `tar` and `gzip`, before it runs.
+before `install`.
 
 | Image | Missing | Setup step |
 |---|---|---|
@@ -351,7 +350,7 @@ killed on smaller resource classes.
 | Error | Resolution |
 |---|---|
 | `no java executable was found` | Use a `cimg/openjdk` image, install Java in an earlier step (see [Red Hat UBI images](#red-hat-ubi-images)), or set `JAVA_HOME` (ZAP 2.17.0+). |
-| `Required tool 'tar'` or `'gzip' is not available` | Install it in an earlier step. The UBI minimal and OpenJDK images need `microdnf install -y tar gzip`, as root. |
+| `Required tool '...' is not available` | Install the package the error names in an earlier step. On UBI images, see [Red Hat UBI images](#red-hat-ubi-images). |
 | `ignores JAVA_HOME, so java must be on the PATH` | Add `$JAVA_HOME/bin` to the `PATH` for ZAP releases before 2.17.0. |
 | `requires Java 17 or newer, but found Java ...` | Upgrade the executor's Java, or point `JAVA_HOME` at a newer runtime. On UBI, check which Java `alternatives` selected. |
 | `only runs on Java 7 or 8` | Use `cimg/openjdk:8.0` for ZAP 2.5.0 and older, or pick a newer ZAP. |
@@ -412,7 +411,7 @@ requires all of them to pass:
   an nginx service container: `ubi` with Java 11, 17, and 21 (21 on both amd64
   and arm64), `ubi-minimal`, and the `openjdk` images run as root. Also Java 8
   installed alongside Java 21, with 21 selected by `JAVA_HOME` or by
-  `alternatives`, and an install of ZAP 2.11.1 on UBI's Java 8.
+  `alternatives`, and an install of ZAP 2.5.0 on UBI's Java 8.
 - Paths containing spaces and environment variables, with caching disabled.
 - Repeated invocation in one job, and a cache save/restore round trip.
 - `.circleci/scripts/install_script_tests.sh`, which runs the install script
