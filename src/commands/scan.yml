@@ -27,14 +27,22 @@ parameters:
     default: ""
     description: >
       Path to a custom Automation Framework plan to run instead of a generated one. The plan can reference
-      ${ZAP_TARGET} and ${ZAP_REPORT_DIR}, and must set its own pass/fail criteria, since fail_on, scan_type,
-      spider_minutes, and active_scan_minutes are ignored. Environment variables are expanded.
+      ${ZAP_TARGET} and ${ZAP_REPORT_DIR}, and must set its own pass/fail criteria, since fail_on, ignore_rules,
+      scan_type, spider_minutes, and active_scan_minutes are ignored. Environment variables are expanded.
   fail_on:
     type: enum
     enum: ["high", "medium", "low", "info", "never"]
     default: medium
     description: >
       Fails the step if any alert is at or above this risk level. "never" only reports alerts. Ignored when plan is set.
+  ignore_rules:
+    type: string
+    default: ""
+    description: >
+      ZAP scan rule IDs whose alerts are false positives for this application, separated by commas or whitespace,
+      such as "10020, 10038". Their alerts are marked as false positives, and left out of the reports and the fail_on
+      check. Rule IDs are listed at https://www.zaproxy.org/docs/alerts/ and in each alert's "Plugin Id". Ignored
+      when plan is set.
   spider_minutes:
     type: integer
     default: 1
@@ -107,6 +115,7 @@ steps:
         PARAM_API_DEFINITION: << parameters.api_definition >>
         PARAM_PLAN: << parameters.plan >>
         PARAM_FAIL_ON: << parameters.fail_on >>
+        PARAM_IGNORE_RULES: << parameters.ignore_rules >>
         PARAM_SPIDER_MINUTES: << parameters.spider_minutes >>
         PARAM_ACTIVE_SCAN_MINUTES: << parameters.active_scan_minutes >>
         PARAM_AUTH_HEADER_VALUE: << parameters.auth_header_value >>

@@ -21,7 +21,7 @@ welcome!
 
 Info for security teams:
 - Required external access to allow, if running a locked down, self-hosted CircleCI pipeline on-prem:
-  - `github.com` and `objects.githubusercontent.com`: For download and installation of ZAP.
+  - `github.com`, `release-assets.githubusercontent.com`, and `objects.githubusercontent.com`: For download and installation of ZAP. GitHub redirects release downloads to one of the latter two.
   - Scans only contact the target, plus the `api_definition` URL if one is given. Every add-on the scans use is bundled with the ZAP release, so nothing is downloaded at scan time.
 
 ## Requirements
@@ -163,6 +163,7 @@ step.
 | `api_definition` | | Path or URL of an OpenAPI definition, for `api` scans. |
 | `plan` | | Custom Automation Framework plan to run instead. |
 | `fail_on` | `medium` | Fail on alerts at or above `high`, `medium`, `low`, or `info`, or `never`. |
+| `ignore_rules` | | Scan rule IDs to treat as false positives, such as `10020, 10038`. |
 | `spider_minutes` | `1` | Spider time limit for `baseline` and `full` scans, or `0` for none. |
 | `active_scan_minutes` | `10` | Active scan time limit for `full` and `api` scans, or `0` for none. |
 | `auth_header_value` | `ZAP_AUTH_HEADER_VALUE` | Name of the environment variable holding the header value. |
@@ -187,6 +188,29 @@ keep all of their reports. The step prints the number of alerts at each risk lev
 at or above `fail_on`. It also fails if ZAP reports a plan error, such as the
 target refusing connections. Alerts are counted by type, so one missing header
 on 50 pages is one alert.
+
+**Ignoring false positives.** Set `ignore_rules` to the IDs of scan rules that
+don't apply to your application, separated by commas or whitespace. Each
+alert's rule ID is the "Plugin Id" in `report.html` and `pluginid` in
+`report.json`, and all of them are listed in ZAP's
+[alert reference](https://www.zaproxy.org/docs/alerts/).
+
+```yaml
+- zap/scan:
+    target: http://localhost:8080
+    fail_on: medium
+    # 10020 Missing Anti-clickjacking Header and 10038 CSP Header Not Set: both
+    # headers are added by the reverse proxy in production, which CI scans bypass.
+    ignore_rules: "10020, 10038"
+```
+
+ZAP marks these rules' alerts as false positives with an
+[alert filter](https://www.zaproxy.org/docs/desktop/addons/alert-filters/),
+and they're left out of the reports and the `fail_on` check. The rules still
+run, and a rule is ignored on every URL. To ignore a rule only on some URLs,
+parameters, or evidence, or to ignore just one alert variant such as
+`10038-1`, add an `alertFilter` job to a custom plan. Leave a comment next to
+`ignore_rules` explaining each rule, so they can be revisited later.
 
 **Authentication.** If the application accepts a token in a header, such as
 an API key or a bearer token, store it in a
@@ -225,7 +249,7 @@ parameters take precedence over them.
 **Custom plans.** Set `plan` to run your own plan, for example one with
 authentication configured, exported from the ZAP desktop app. The plan can
 reference `${ZAP_TARGET}` and `${ZAP_REPORT_DIR}`, which are set from `target`
-and `report_dir`. `fail_on`, `scan_type`, and the time limits don't apply to
+and `report_dir`. `fail_on`, `ignore_rules`, `scan_type`, and the time limits don't apply to
 custom plans, so end the plan with an `exitStatus` job (ZAP 2.16.0 or newer)
 to fail on alerts. The step fails when ZAP exits with a plan error (exit code
 1), and passes with a warning on plan warnings (exit code 2).
@@ -243,14 +267,15 @@ killed on smaller resource classes.
 | `ignores JAVA_HOME, so java must be on the PATH` | Add `$JAVA_HOME/bin` to the `PATH` for ZAP releases before 2.17.0. |
 | `requires Java 17 or newer, but found Java ...` | Upgrade the executor's Java, or point `JAVA_HOME` at a newer runtime. |
 | `only runs on Java 7 or 8` | Use `cimg/openjdk:8.0` for ZAP 2.5.0 and older, or pick a newer ZAP. |
-| `Unable to download ZAP ...` | The version was never released, or is no longer hosted by the ZAP project. |
+| `Unable to download ZAP ...` | After a 404, the version was never released, or is no longer hosted by the ZAP project. After 5xx errors, GitHub was unavailable for several minutes, so re-run the job. |
 | `No checksum available for version ... and strict mode is enabled` | Upgrade the orb, or temporarily use `verify_checksums: known_versions`. |
 | `... already exists and is not empty` | Choose a different `install_path`, or remove the directory first. |
 | `zap.sh was not found on the PATH` | Run `install` earlier in the same job as `scan`. |
 | `... did not respond within ...s` | Check that the application started and listens on the `target` host and port, or raise `wait_for_target`. |
 | `auth_header_value names $... which is unset or empty` | Attach the context that defines the variable to the job, or check its name. |
 | Authenticated pages are missing from the reports | Check that `auth_header_site` matches the host in `target`, and that the token hasn't expired. |
-| `alert type(s) at or above fail_on` | Review `report.html` in the job's artifacts, then fix the findings or raise `fail_on`. |
+| `alert type(s) at or above fail_on` | Review `report.html` in the job's artifacts, then fix the findings, add false positives to `ignore_rules`, or raise `fail_on`. |
+| `Invalid rule '...' in ignore_rules` | Use numeric rule IDs such as `10020`. For alert references such as `10038-1`, use an `alertFilter` job in a custom plan. |
 | `ZAP scan failed (exit code 1)` | Look for "Automation plan failures" in the output. The target may be unreachable. |
 | ZAP is killed, or runs out of memory | Raise `max_memory`, or use a larger `resource_class`. |
 | `Too long with no output` | Raise `no_output_timeout`, or lower `active_scan_minutes`. |
@@ -306,6 +331,9 @@ requires all of them to pass:
 - Authenticated scans of an nginx container that requires an `X-Api-Key`
   header, on ZAP 2.17.0 and 2.12.0. These check that the header reaches only
   `auth_header_site` and that its value never appears in the outputs.
+- Baseline scans that ignore nginx's medium risk alerts with `ignore_rules`,
+  on ZAP 2.17.0 and 2.12.0, which must pass at `fail_on: medium` with those
+  alerts absent from every report.
 - `.circleci/scripts/scan_script_tests.sh`, which runs the scan script against
   a fake `zap.sh` to cover validation, plan generation, and result handling,
   then runs real scans of each type.

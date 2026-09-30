@@ -33,6 +33,7 @@ SCAN_TYPE="${PARAM_SCAN_TYPE:-baseline}"
 API_DEFINITION=$(expand "${PARAM_API_DEFINITION:-}")
 PLAN=$(expand "${PARAM_PLAN:-}")
 FAIL_ON="${PARAM_FAIL_ON:-medium}"
+IGNORE_RULES="${PARAM_IGNORE_RULES:-}"
 SPIDER_MINUTES="${PARAM_SPIDER_MINUTES:-1}"
 ACTIVE_SCAN_MINUTES="${PARAM_ACTIVE_SCAN_MINUTES:-10}"
 AUTH_HEADER_VALUE_VAR="${PARAM_AUTH_HEADER_VALUE:-ZAP_AUTH_HEADER_VALUE}"
@@ -161,6 +162,30 @@ else
         fi
     elif [[ -n "${API_DEFINITION}" ]]; then
         echo "WARN: 'api_definition' is ignored unless scan_type is api."
+    fi
+fi
+
+# Rule IDs separated by commas or whitespace, without pathname expansion. Alert
+# references such as 10038-1 aren't accepted, since ZAP 2.12.0's alertFilter
+# job only takes integer rule IDs.
+IGNORED_RULES=()
+read -r -a ignore_entries <<< "${IGNORE_RULES//,/ }"
+for rule in "${ignore_entries[@]}"; do
+    if [[ ! "${rule}" =~ ^[0-9]{1,9}$ ]]; then
+        echo "ERROR: Invalid rule '${rule}' in ignore_rules. Expected a ZAP scan rule ID such as 10020."
+        exit 1
+    fi
+    rule=$((10#${rule}))
+    if [[ " ${IGNORED_RULES[*]} " != *" ${rule} "* ]]; then
+        IGNORED_RULES+=("${rule}")
+    fi
+done
+if [[ "${#IGNORED_RULES[@]}" -gt 0 ]]; then
+    if [[ -n "${PLAN}" ]]; then
+        echo "WARN: 'ignore_rules' is ignored when a custom plan is provided. Add an alertFilter job to the plan instead."
+        IGNORED_RULES=()
+    else
+        echo "  IGNORE_RULES: ${IGNORED_RULES[*]}"
     fi
 fi
 
@@ -293,6 +318,16 @@ if [[ -z "${PLAN}" ]]; then
         echo "    failOnWarning: false"
         echo "    progressToStdout: true"
         echo "jobs:"
+        # Filters only apply to alerts raised after they are added, so this
+        # job must come before anything that scans.
+        if [[ "${#IGNORED_RULES[@]}" -gt 0 ]]; then
+            echo "  - type: alertFilter"
+            echo "    alertFilters:"
+            for rule in "${IGNORED_RULES[@]}"; do
+                echo "      - ruleId: ${rule}"
+                echo "        newRisk: 'False Positive'"
+            done
+        fi
         echo "  - type: passiveScan-config"
         echo "    parameters:"
         echo "      maxAlertsPerRule: 10"
@@ -324,6 +359,11 @@ if [[ -z "${PLAN}" ]]; then
             echo "      template: ${report%%:*}"
             echo "      reportDir: $(yaml_quote "${REPORT_DIR}")"
             echo "      reportFile: ${report#*:}"
+            # Reports include false positives unless told otherwise, and
+            # report.json is what fail_on is checked against.
+            if [[ "${#IGNORED_RULES[@]}" -gt 0 ]]; then
+                echo "    confidences: [high, medium, low]"
+            fi
         done
     } > "${PLAN}"
     cp "${PLAN}" "${REPORT_DIR}/plan.yaml"

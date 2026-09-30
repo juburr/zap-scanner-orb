@@ -196,7 +196,7 @@ jobs:
           - sh
           - -c
           - |
-            cat > /etc/nginx/conf.d/default.conf << 'EOF'
+            cat > /etc/nginx/conf.d/default.conf \<< 'EOF'
             server {
                 listen 80;
                 default_type text/html;
@@ -252,6 +252,49 @@ jobs:
             if grep -rqF "${SCAN_TOKEN}" /tmp/zap-authenticated /tmp/zap-unauthenticated /tmp/zap-other-site; then
               echo "the header value was written to the reports, plan, or log"; exit 1
             fi
+
+  scan-ignore-rules:
+    description: >
+      Scans an nginx service container at fail_on medium while ignoring the
+      only two medium risk rules it raises. The scan must pass, with those
+      alerts absent from every report and the low risk alerts still present.
+    parameters:
+      java:
+        type: string
+        default: "21.0"
+      version:
+        type: string
+        default: "2.17.0"
+      caching:
+        type: boolean
+        default: true
+    docker:
+      - image: cimg/openjdk:<< parameters.java >>
+      - image: nginx:stable-alpine
+    steps:
+      - zap-scanner-orb/install:
+          caching: << parameters.caching >>
+          verify_checksums: strict
+          version: << parameters.version >>
+      - zap-scanner-orb/scan:
+          target: http://localhost/
+          fail_on: medium
+          # Missing Anti-clickjacking Header and CSP Header Not Set.
+          ignore_rules: "10020, 10038"
+      - run:
+          name: Verify the ignored alerts are left out
+          command: |
+            set -euo pipefail
+            grep -qF "type: alertFilter" /tmp/zap-reports/plan.yaml || { echo "plan has no alertFilter job"; exit 1; }
+            for report in report.json report.html report.md; do
+              for alert in "Missing Anti-clickjacking Header" "Content Security Policy (CSP) Header Not Set"; do
+                if grep -qF "${alert}" "/tmp/zap-reports/${report}"; then
+                  echo "${report} still contains the ignored alert '${alert}'"; exit 1
+                fi
+              done
+            done
+            grep -qF "X-Content-Type-Options Header Missing" /tmp/zap-reports/report.json \
+              || { echo "report.json lost an alert that was not ignored"; exit 1; }
 
   scan-custom-plan:
     description: >
@@ -550,6 +593,14 @@ workflows:
           version: "2.12.0"
           caching: false
           filters: *filters
+      - scan-ignore-rules:
+          filters: *filters
+      - scan-ignore-rules:
+          name: scan-ignore-rules-2.12.0
+          java: "11.0"
+          version: "2.12.0"
+          caching: false
+          filters: *filters
       - scan-custom-plan:
           filters: *filters
       - scan-script-tests:
@@ -602,6 +653,8 @@ workflows:
             - scan-baseline-2.12.0
             - scan-auth-header
             - scan-auth-header-2.12.0
+            - scan-ignore-rules
+            - scan-ignore-rules-2.12.0
             - scan-custom-plan
             - scan-script-tests
           context: orb-publishing
