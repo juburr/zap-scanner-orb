@@ -319,6 +319,24 @@ check "nothing downloaded" dir_is_empty "${WORK}/strict-dl2"
 check "nothing installed" test ! -e "${WORK}/strict2/zap"
 end
 
+begin "an unlisted version fails before downloading by default"
+# The install command always passes verify_checksums, so its default in
+# install.yml is what users get, not the script's own fallback for an empty value.
+default_verify=$(awk '/^  verify_checksums:/ { f = 1 } f && /^    default:/ { gsub(/"/, "", $2); print $2; exit }' \
+    "${REPO_ROOT}/src/commands/install.yml")
+check "install.yml defaults verify_checksums to strict" test "${default_verify}" = "strict"
+for verify in "${default_verify}" ""; do
+    label="verify_checksums '${verify:-<empty>}'"
+    case_dir="${WORK}/default-${verify:-empty}"
+    INSTALL_SCRIPT="${WORK}/install_no_checksum.sh" run_install PARAM_VERIFY_CHECKSUMS="${verify}" \
+        ZAP_ORB_DOWNLOAD_DIR="${case_dir}/dl" PARAM_INSTALL_PATH="${case_dir}/zap" PARAM_BIN_PATH="${case_dir}/bin"
+    check "${label} is rejected" rc_is_nonzero
+    check "${label} explained" output_has "No checksum available for version ${VERSION} and strict mode is enabled"
+    check "${label} downloaded nothing" dir_is_empty "${case_dir}/dl"
+    check "${label} installed nothing" test ! -e "${case_dir}/zap"
+done
+end
+
 begin "tampered archive fails verification when it is freshly downloaded"
 # Simulate a bad upstream by pointing the table at the wrong checksum.
 sed "s/\[\"${VERSION//./\\.}\"\]=\"[0-9a-f]\{128\}\"/[\"${VERSION}\"]=\"$(printf '0%.0s' {1..128})\"/" "${SCRIPT}" > "${WORK}/install_bad_checksum.sh"

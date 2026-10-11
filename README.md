@@ -14,7 +14,7 @@ welcome!
 ## Features
 ### **Secure By Design**
 - **Least Privilege**: Installs to user-owned directories by default, with no `sudo` usage anywhere in this orb.
-- **Integrity**: Checksum validation of all downloaded release archives using SHA-512, anchored to the SHA-256 checksums ZAP publishes with each release. Cached archives are re-verified on every restore.
+- **Integrity**: Checksum validation of all downloaded release archives using SHA-512, anchored to the SHA-256 checksums ZAP publishes with each release. Versions without a pinned checksum fail closed by default, and cached archives are re-verified on every restore.
 - **Provenance**: Installs directly from ZAP's official [releases page](https://github.com/zaproxy/zaproxy/releases/) on GitHub. No third-party websites, domains, or proxies are used.
 - **Confidentiality**: All secrets and environment variables are handled in accordance with CircleCI's [security recommendations](https://circleci.com/docs/security-recommendations/) and [best practices](https://circleci.com/docs/orbs-best-practices/).
 - **Privacy**: No usage data of any kind is collected or shipped back to the orb developer. Scans run ZAP with `-silent`, so ZAP itself makes no unsolicited requests, such as update checks or telemetry, to its own services.
@@ -40,8 +40,8 @@ the version against the minimum declared by the ZAP release being installed.
 
 ### Supported ZAP versions
 
-Every ZAP release still hosted by the ZAP project can be installed with
-`verify_checksums: strict`:
+Every ZAP release still hosted by the ZAP project has a pinned checksum, so it
+installs with the default `verify_checksums: strict`:
 
 | ZAP version | Java | Executor example | Red Hat UBI 8 package |
 |---|---|---|---|
@@ -196,7 +196,7 @@ extracts it to `install_path`, and symlinks `zap.sh` into `bin_path`. If
 | `caching` | `true` | Cache the release archive, keyed by version. |
 | `install_path` | `$HOME/zap` | Absolute directory to extract ZAP into. Must not exist or be empty. |
 | `bin_path` | `$HOME/bin` | Absolute directory for the `zap.sh` symlink. |
-| `verify_checksums` | `known_versions` | `strict`, `known_versions`, or `false`. |
+| `verify_checksums` | `strict` | `strict`, `known_versions`, or `false`. |
 | `version` | `2.17.0` | ZAP version to install. |
 
 Environment variables such as `$HOME` are expanded in `install_path` and
@@ -209,9 +209,10 @@ older releases), as recorded in
 [`src/scripts/upstream_checksums.txt`](src/scripts/upstream_checksums.txt).
 The one exception is 2.8.1, a Kali-only bug fix release for which the ZAP
 project never published a checksum; it is pinned to the archive the ZAP project
-serves on GitHub. With `known_versions`, releases newer than this orb's
-checksum table install with a warning. With `strict` (recommended), they fail
-before anything is downloaded.
+serves on GitHub. With `strict` (the default), releases newer than this orb's
+checksum table fail before anything is downloaded, until the orb is upgraded
+to pin them. With `known_versions`, they install unverified with a warning,
+and `false` turns verification off for every version.
 
 **Caching.** The archive is cached under `zap-scanner-orb-v1-<version>` and
 re-verified after every restore. If a cached archive no longer matches its
@@ -355,7 +356,7 @@ killed on smaller resource classes.
 | `requires Java 17 or newer, but found Java ...` | Upgrade the executor's Java, or point `JAVA_HOME` at a newer runtime. On UBI, check which Java `alternatives` selected. |
 | `only runs on Java 7 or 8` | Use `cimg/openjdk:8.0` for ZAP 2.5.0 and older, or pick a newer ZAP. |
 | `Unable to download ZAP ...` | After a 404, the version was never released, or is no longer hosted by the ZAP project. After 5xx errors, GitHub was unavailable for several minutes, so re-run the job. |
-| `No checksum available for version ... and strict mode is enabled` | Upgrade the orb, or temporarily use `verify_checksums: known_versions`. |
+| `No checksum available for version ... and strict mode is enabled` | Upgrade the orb once it pins the release, or temporarily set `verify_checksums: known_versions` to install it unverified. |
 | `... already exists and is not empty` | Choose a different `install_path`, or remove the directory first. |
 | `zap.sh was not found on the PATH` | Run `install` earlier in the same job as `scan`. |
 | `... did not respond within ...s` | Check that the application started and listens on the `target` host and port, or raise `wait_for_target`. |
