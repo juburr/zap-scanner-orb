@@ -21,7 +21,9 @@ parameters:
     type: string
     default: ""
     description: >
-      Path or http(s) URL of the OpenAPI definition to import when scan_type is api. Environment variables are expanded.
+      Path or http(s) URL of the OpenAPI definition to import when scan_type is api. Its operations are scanned on
+      target rather than on the definition's servers, so a relative server such as "/" works. A path in target,
+      including a lone trailing "/", replaces the server's path. Environment variables are expanded.
   plan:
     type: string
     default: ""

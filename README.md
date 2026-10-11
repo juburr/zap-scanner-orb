@@ -276,6 +276,18 @@ at or above `fail_on`. It also fails if ZAP reports a plan error, such as the
 target refusing connections. Alerts are counted by type, so one missing header
 on 50 pages is one alert.
 
+**API definitions.** `api` scans send every operation in `api_definition` to
+`target`, never to the definition's `servers`. A relative server such as `/`
+therefore resolves against `target`, and a production URL in `servers` is never
+scanned. When `api_definition` is a URL, ZAP only fetches the definition from
+that host. A path in `target` replaces the server's path, and a lone trailing
+`/` counts as a path. For example, with `servers: [{url: /v1}]`, a `target` of
+`http://localhost:8080` scans `/v1/...`, but `http://localhost:8080/` scans the
+operations at the root. Custom plans must set `targetUrl` on their `openapi` job
+to get this behavior. Without it, ZAP fails to import a definition file whose
+servers are relative, and resolves the servers of a definition fetched from a
+URL against the host that served it.
+
 **Ignoring false positives.** Set `ignore_rules` to the IDs of scan rules that
 don't apply to your application, separated by commas or whitespace. Each
 alert's rule ID is the "Plugin Id" in `report.html` and `pluginid` in
@@ -322,8 +334,8 @@ parameters take precedence over them.
 - The value is never printed, and never written to the plan, the reports, or
   ZAP's command line. Only the ZAP process receives it, in its environment.
 - `auth_header_site` defaults to the host of `target`, so the header isn't sent
-  to other hosts the scan reaches, such as the `servers` of an OpenAPI
-  definition. ZAP matches any site whose name contains the value, so
+  to other hosts the scan reaches, such as the host serving an `api_definition`
+  URL. ZAP matches any site whose name contains the value, so
   `example.com` also matches `api.example.com`. A custom plan without a
   `target` must set `auth_header_site`.
 - If `auth_header_value` names a variable other than the default and it is
@@ -421,7 +433,9 @@ requires all of them to pass:
 - A check that re-derives every pinned checksum from the values recorded in
   `upstream_checksums.txt`, and that every pinned version is tested.
 - The `scan` command running baseline, full, api, and custom plan scans of an
-  nginx service container, plus a baseline scan with ZAP 2.12.0 on Java 11.
+  nginx service container, plus a baseline scan with ZAP 2.12.0 on Java 11. The
+  api scan's definition has the relative server `/`, and its operations must be
+  scanned on the target.
 - Authenticated scans of an nginx container that requires an `X-Api-Key`
   header, on ZAP 2.17.0 and 2.12.0. These check that the header reaches only
   `auth_header_site` and that its value never appears in the outputs.
@@ -430,7 +444,8 @@ requires all of them to pass:
   alerts absent from every report.
 - `.circleci/scripts/scan_script_tests.sh`, which runs the scan script against
   a fake `zap.sh` to cover validation, plan generation, and result handling,
-  then runs real scans of each type.
+  then runs real scans of each type. One imports a definition by URL from a
+  second host, which must receive nothing but the request for the definition.
 - Both test scripts again, on UBI 8 with its own OpenJDK package.
 
 The test scripts can also be run locally with Java 17+ on the `PATH`:
