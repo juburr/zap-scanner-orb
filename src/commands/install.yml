@@ -26,10 +26,10 @@ parameters:
   verify_checksums:
     type: enum
     enum: ["false", "known_versions", "strict"]
-    default: known_versions
+    default: strict
     description: >
       SHA-512 verification of the downloaded ZAP release archive. "strict" fails for versions this orb has no checksum for,
-      "known_versions" warns and continues for them, and "false" disables verification.
+      before downloading anything. "known_versions" warns and installs them unverified, and "false" disables verification.
   version:
     type: string
     default: "2.17.0"

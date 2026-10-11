@@ -127,7 +127,8 @@ elif [[ -z "${EXPECTED_CHECKSUM}" ]]; then
         echo "WARN: Skipping checksum verification..."
     else
         echo "ERROR: No checksum available for version ${VERSION} and strict mode is enabled."
-        echo "ERROR: Either upgrade this orb, submit a PR with the new checksum, or set 'verify_checksums' to 'known_versions'."
+        echo "ERROR: Either upgrade this orb, submit a PR with the new checksum, or set 'verify_checksums' to 'known_versions'"
+        echo "ERROR: to install it without verification."
         exit 1
     fi
 fi
