@@ -675,11 +675,13 @@ workflows:
           name: scan-full
           scan_type: full
           filters: *filters
+      # The definition's only server is the relative "/", which ZAP can't import
+      # from a file on its own. Its operations must be scanned on the target.
       - scan-docker:
           name: scan-api
           scan_type: api
-          api_definition: .circleci/zap/openapi.json
-          report_pattern: /api/items
+          api_definition: .circleci/zap/openapi-relative-server.json
+          report_pattern: http://localhost/api/items
           filters: *filters
       # The oldest release the scan command supports, on the oldest Java it supports.
       - scan-docker:

@@ -767,7 +767,55 @@ else
         PARAM_API_DEFINITION="${FIXTURES}/openapi.json"
     check "exit code is zero" rc_is_zero
     check "imported the definition" output_has "Job openapi added"
-    check "scanned an operation from the definition" file_has "${REPORTS}/report.json" "/api/items"
+    check "scanned an operation from the definition on the target" file_has "${REPORTS}/report.json" \
+        "${SCAN_TARGET%/}/api/items"
+    end
+
+    begin "real api scan of a definition URL on another host"
+    # The definition's relative server would resolve against the host serving
+    # it, so that host must receive nothing but the request for the definition.
+    if command -v python3 &> /dev/null; then
+        spec_host="${WORK}/spec-host"
+        mkdir -p "${spec_host}"
+        python3 - "${FIXTURES}/openapi-relative-server.json" "${spec_host}/requests" > "${spec_host}/port" 2> /dev/null << 'EOF' &
+import http.server, sys
+class Handler(http.server.BaseHTTPRequestHandler):
+    def handle_any(self):
+        with open(sys.argv[2], "a") as log:
+            log.write(f"{self.command} {self.path}\n")
+        found = self.path == "/openapi.json"
+        body = open(sys.argv[1], "rb").read() if found else b"not found"
+        self.send_response(200 if found else 404)
+        self.send_header("Content-Type", "application/json" if found else "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+    do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = do_OPTIONS = handle_any
+    def log_message(self, *args):
+        pass
+server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+print(server.server_address[1], flush=True)
+server.serve_forever()
+EOF
+        spec_pid=$!
+        for _ in $(seq 1 50); do
+            [[ -s "${spec_host}/port" ]] && break
+            sleep 0.1
+        done
+        run_real_scan PARAM_SCAN_TYPE="api" PARAM_FAIL_ON="never" PARAM_ACTIVE_SCAN_MINUTES="1" \
+            PARAM_API_DEFINITION="http://127.0.0.1:$(cat "${spec_host}/port")/openapi.json"
+        kill "${spec_pid}" 2> /dev/null
+        check "exit code is zero" rc_is_zero
+        check "imported the definition" output_has "Job openapi added"
+        check "scanned an operation from the definition on the target" file_has "${REPORTS}/report.json" \
+            "${SCAN_TARGET%/}/api/items"
+        check "fetched the definition from its host" grep -qx "GET /openapi.json" "${spec_host}/requests"
+        check "sent nothing else to the definition's host" bash -c '! grep -vqx "GET /openapi.json" "$1"' _ \
+            "${spec_host}/requests"
+    else
+        echo "    skipped: python3 is required"
+    fi
     end
 
     begin "real custom plan that raises warnings"
