@@ -56,6 +56,9 @@ steps:
         - run:
             name: Prepare ZAP cache key
             command: echo "$(uname -m) ${HOME}" > /tmp/zap-scanner-orb-cache-key
+        # A saved cache can't be replaced. Bump v1 when an existing checksum
+        # table entry changes, so caches saved for the old bytes stop being
+        # restored.
         - restore_cache:
             key: zap-scanner-orb-v1-<< parameters.version >>-{{ checksum "/tmp/zap-scanner-orb-cache-key" }}
   - run:
