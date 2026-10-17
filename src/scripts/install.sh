@@ -7,11 +7,11 @@ set -eo pipefail
 expand() {
     local value=$1
     local expanded
-    # circleci env subst reads stdin when given an empty argument.
     if [[ -z "${value}" ]]; then
         return 0
     fi
-    if command -v circleci &> /dev/null && expanded=$(circleci env subst "${value}" 2> /dev/null); then
+    # Passed on stdin, since values starting with "-" would be parsed as flags.
+    if command -v circleci &> /dev/null && expanded=$(printf '%s' "${value}" | circleci env subst 2> /dev/null); then
         printf '%s' "${expanded}"
     else
         printf '%s' "${value}"

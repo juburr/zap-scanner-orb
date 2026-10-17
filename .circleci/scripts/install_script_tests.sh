@@ -208,7 +208,7 @@ check "installed" test -f "${WORK}/nobashenv/zap/zap.sh"
 end
 
 begin "environment variables in paths are expanded"
-if command -v circleci &> /dev/null && circleci env subst 'x' &> /dev/null; then
+if command -v circleci &> /dev/null && printf x | circleci env subst &> /dev/null; then
     run_install ZAP_TEST_ROOT="${WORK}/expand" PARAM_INSTALL_PATH='${ZAP_TEST_ROOT}/zap' PARAM_BIN_PATH='$ZAP_TEST_ROOT/bin'
     check "exit code is zero" rc_is_zero
     check "install_path expanded" test -f "${WORK}/expand/zap/zap.sh"
