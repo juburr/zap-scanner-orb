@@ -1,61 +1,73 @@
 description: >
-  Installs OWASP ZAP from its official GitHub release and places zap.sh on the PATH.
-  Requires a Linux executor with a Java runtime supported by the chosen ZAP version
-  (Java 17 or newer for current releases, for example cimg/openjdk:21.0). From ZAP
-  2.17.0 onward JAVA_HOME is honored when set; earlier releases require java on the
-  PATH. Also requires tar and gzip. On Red Hat UBI images, install whichever of Java,
-  tar, and gzip the image lacks in an earlier step. Safe to invoke more than once in a job.
-  This command should be invoked prior to calling any other commands.
+  Installs OWASP ZAP from its official GitHub release, after verifying its
+  SHA-512 checksum, and places zap.sh on the PATH. Requires a Java runtime
+  supported by the chosen ZAP version (Java 17 or newer for current releases,
+  for example cimg/openjdk:21.0). From ZAP 2.17.0 onward JAVA_HOME is honored
+  when set; earlier releases require java on the PATH. Also requires tar and
+  gzip. On Red Hat UBI images, install whichever of Java, tar, and gzip the
+  image lacks in an earlier step. Safe to invoke more than once in a job. Run
+  this before the orb's other commands.
 parameters:
-  caching:
-    type: boolean
-    default: true
-    description: Cache the downloaded ZAP release archive, keyed by version. The archive is re-verified after every cache restore.
-  install_path:
-    type: string
-    default: ""
-    description: >
-      Absolute path of the directory to extract ZAP into. Must not exist or be empty. Environment variables are expanded.
-      Defaults to $HOME/zap.
   bin_path:
     type: string
     default: ""
     description: >
-      Absolute path of a binary directory for the zap.sh symlink, added to the PATH if needed. Environment variables are
-      expanded. Defaults to $HOME/bin.
+      Absolute path of a binary directory for the zap.sh symlink, added to the
+      PATH of later steps when it isn't already on it. Environment variables
+      are expanded. Defaults to $HOME/bin.
+  caching:
+    type: boolean
+    default: true
+    description: >
+      Cache the downloaded release archive between jobs, keyed by version.
+      Only verified archives are cached, and a cached archive is verified
+      again before it is installed.
+  install_path:
+    type: string
+    default: ""
+    description: >
+      Absolute path of the directory to extract ZAP into. It must not exist or
+      must be empty. Environment variables are expanded. Defaults to $HOME/zap.
   verify_checksums:
     type: enum
     enum: ["false", "known_versions", "strict"]
     default: strict
     description: >
-      SHA-512 verification of the downloaded ZAP release archive. "strict" fails for versions this orb has no checksum for,
-      before downloading anything. "known_versions" warns and installs them unverified, and "false" disables verification.
+      SHA-512 verification against this orb's checksum table. "strict"
+      (default) fails before downloading anything when the version has no
+      checksum in the table. "known_versions" verifies listed versions and
+      installs unlisted versions unverified, with a warning. "false" skips
+      verification and is not recommended.
   version:
     type: string
     default: "2.17.0"
-    description: Specify the semver of the ZAP version to install.
+    description: >
+      Version of ZAP to install, such as 2.17.0. A leading "v" is ignored, and
+      environment variables are expanded.
 steps:
   - when:
       condition: << parameters.caching >>
       steps:
+        # The cache key names the CPU with uname -m rather than {{ arch }},
+        # which also encodes the CPU model and would split the cache by host.
+        - run:
+            name: Prepare ZAP cache key
+            command: uname -m > /tmp/zap-scanner-orb-arch
         - restore_cache:
-            key: zap-scanner-orb-v1-<< parameters.version >>
+            key: zap-scanner-orb-v1-<< parameters.version >>-{{ checksum "/tmp/zap-scanner-orb-arch" }}
   - run:
-      name: Install ZAP
+      name: Install ZAP << parameters.version >>
       environment:
-        PARAM_INSTALL_PATH: << parameters.install_path >>
         PARAM_BIN_PATH: << parameters.bin_path >>
+        PARAM_CACHING: << parameters.caching >>
+        PARAM_INSTALL_PATH: << parameters.install_path >>
         PARAM_VERIFY_CHECKSUMS: << parameters.verify_checksums >>
         PARAM_VERSION: << parameters.version >>
-        ZAP_ORB_DOWNLOAD_DIR: /tmp/zap-orb-download
       command: << include(scripts/install.sh) >>
   - when:
       condition: << parameters.caching >>
       steps:
         - save_cache:
-            key: zap-scanner-orb-v1-<< parameters.version >>
+            key: zap-scanner-orb-v1-<< parameters.version >>-{{ checksum "/tmp/zap-scanner-orb-arch" }}
             paths:
-              - /tmp/zap-orb-download/zap.tar.gz
-  - run:
-      name: Cleanup ZAP Install
-      command: rm -rf /tmp/zap-orb-download
+              - ~/.cache/zap-scanner-orb

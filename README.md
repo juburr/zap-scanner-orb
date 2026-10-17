@@ -199,8 +199,8 @@ extracts it to `install_path`, and symlinks `zap.sh` into `bin_path`. If
 | `verify_checksums` | `strict` | `strict`, `known_versions`, or `false`. |
 | `version` | `2.17.0` | ZAP version to install. |
 
-Environment variables such as `$HOME` are expanded in `install_path` and
-`bin_path`.
+Environment variables such as `$HOME`, and a leading `~/`, are expanded in
+`install_path` and `bin_path`.
 
 **Checksum verification.** Every supported version has a pinned SHA-512
 checksum. Each one was derived from a download that matched the checksum the
@@ -214,14 +214,18 @@ checksum table fail before anything is downloaded, until the orb is upgraded
 to pin them. With `known_versions`, they install unverified with a warning,
 and `false` turns verification off for every version.
 
-**Caching.** The archive is cached under `zap-scanner-orb-v1-<version>` and
-re-verified after every restore. If a cached archive no longer matches its
-checksum, it is discarded and downloaded again rather than failing the build.
+**Caching.** The archive is cached under a key made of the version and the
+CPU architecture (`zap-scanner-orb-v1-<version>-…`). Only verified archives
+are cached, and a restored archive is verified again before it is used. If a
+cached archive no longer matches its checksum, it is discarded and downloaded
+again rather than failing the build.
 
 **Re-running.** Invoking `install` again with the same `install_path` and
 `version` is a no-op, so it is safe to call from multiple reusable commands in
 one job. Installing into a non-empty directory that this orb did not create, or
-over a different version, fails without touching the existing files.
+over a different version, fails without touching the existing files. So does a
+verified install over one made with `verify_checksums: false` whose archive
+doesn't match the checksum.
 
 **Atomicity.** ZAP is extracted into a staging directory beside `install_path`
 and only moved into place once it has been verified, so a failed install never

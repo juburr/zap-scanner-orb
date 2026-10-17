@@ -52,8 +52,10 @@ commands:
             test "${ZAP_INSTALL_PATH}" = "${expected_install}"
             test "${ZAP_VERSION}" = "<< parameters.version >>"
 
-            # The cleanup step must remove the downloaded archive.
-            test ! -e /tmp/zap-orb-download
+            # install must not leave its temporary directory behind.
+            if compgen -G "${TMPDIR:-/tmp}/zap-scanner-orb.*" > /dev/null; then
+              echo "install left a temporary directory in ${TMPDIR:-/tmp}"; exit 1
+            fi
 
             # Staging directories must never be left beside the install. Checked
             # with a glob, since ubi-minimal doesn't ship find.
@@ -519,11 +521,14 @@ jobs:
           # with a self-signed certificate. The orb itself needs none of them.
           command: dnf install -y java-21-openjdk-headless git-core openssh-clients wget diffutils python3 openssl
       - checkout
+      - run:
+          name: Prepare the install cache key
+          command: uname -m > /tmp/zap-scanner-orb-arch
       - restore_cache:
-          key: zap-scanner-orb-v1-2.17.0
+          key: zap-scanner-orb-v1-2.17.0-{{ checksum "/tmp/zap-scanner-orb-arch" }}
       - run:
           name: Run install script tests
-          command: SEED_ARCHIVE=/tmp/zap-orb-download/zap.tar.gz bash .circleci/scripts/install_script_tests.sh
+          command: SEED_ARCHIVE=/home/circleci/.cache/zap-scanner-orb/2.17.0/noarch/ZAP_2.17.0_Linux.tar.gz bash .circleci/scripts/install_script_tests.sh
       - zap-scanner-orb/install:
           verify_checksums: strict
       - run:
@@ -538,15 +543,18 @@ jobs:
       - image: cimg/openjdk:21.0
     steps:
       - checkout
+      - run:
+          name: Prepare the install cache key
+          command: uname -m > /tmp/zap-scanner-orb-arch
       - restore_cache:
-          key: zap-scanner-orb-v1-2.17.0
+          key: zap-scanner-orb-v1-2.17.0-{{ checksum "/tmp/zap-scanner-orb-arch" }}
       - run:
           name: Verify the cached archive
           command: |
             set -euo pipefail
-            test -f /tmp/zap-orb-download/zap.tar.gz
-            expected=$(grep -oP '\["2\.17\.0"\]="\K[0-9a-f]{128}' src/scripts/install.sh)
-            test "$(sha512sum /tmp/zap-orb-download/zap.tar.gz | awk '{ print $1 }')" = "${expected}"
+            test -f /home/circleci/.cache/zap-scanner-orb/2.17.0/noarch/ZAP_2.17.0_Linux.tar.gz
+            expected=$(grep -oP '\["2\.17\.0/noarch"\]="\K[0-9a-f]{128}' src/scripts/install.sh)
+            test "$(sha512sum /home/circleci/.cache/zap-scanner-orb/2.17.0/noarch/ZAP_2.17.0_Linux.tar.gz | awk '{ print $1 }')" = "${expected}"
       - run:
           name: Install from the cached archive
           command: |
@@ -555,14 +563,13 @@ jobs:
             PARAM_BIN_PATH="${HOME}/bin" \
             PARAM_VERIFY_CHECKSUMS=strict \
             PARAM_VERSION=2.17.0 \
-            ZAP_ORB_DOWNLOAD_DIR=/tmp/zap-orb-download \
-            bash src/scripts/install.sh | tee /tmp/install.log
-            grep -q "Using cached ZAP 2.17.0 archive." /tmp/install.log
+            PARAM_CACHING=true \
+            bash src/scripts/install.sh 2>&1 | tee /tmp/install.log
+            grep -q "Using ZAP_2.17.0_Linux.tar.gz from the cache." /tmp/install.log
             if grep -q "Downloading" /tmp/install.log; then
               echo "expected the cached archive to be used"
               exit 1
             fi
-            rm -rf /tmp/zap-orb-download
       - verify-install
 
   install-script-tests:
@@ -574,11 +581,14 @@ jobs:
       - image: cimg/openjdk:21.0
     steps:
       - checkout
+      - run:
+          name: Prepare the install cache key
+          command: uname -m > /tmp/zap-scanner-orb-arch
       - restore_cache:
-          key: zap-scanner-orb-v1-2.17.0
+          key: zap-scanner-orb-v1-2.17.0-{{ checksum "/tmp/zap-scanner-orb-arch" }}
       - run:
           name: Run install script tests
-          command: SEED_ARCHIVE=/tmp/zap-orb-download/zap.tar.gz bash .circleci/scripts/install_script_tests.sh
+          command: SEED_ARCHIVE=/home/circleci/.cache/zap-scanner-orb/2.17.0/noarch/ZAP_2.17.0_Linux.tar.gz bash .circleci/scripts/install_script_tests.sh
 
   checksum-table:
     description: >
@@ -594,7 +604,7 @@ jobs:
           name: Verify table coverage
           command: |
             set -euo pipefail
-            grep -oE '^\s*\["[0-9]+\.[0-9]+\.[0-9]+"\]="[0-9a-f]{128}"' src/scripts/install.sh | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort -V > /tmp/table-versions.txt
+            grep -oE '^\s*\["[0-9]+\.[0-9]+\.[0-9]+/noarch"\]="[0-9a-f]{128}"' src/scripts/install.sh | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort -V > /tmp/table-versions.txt
             grep -vE '^\s*(#|$)' src/scripts/upstream_checksums.txt | awk '{ print $1 }' | sort -V > /tmp/upstream-versions.txt
             echo "Pinned versions: $(tr '\n' ' ' < /tmp/table-versions.txt)"
             diff /tmp/table-versions.txt /tmp/upstream-versions.txt
@@ -611,11 +621,11 @@ jobs:
           name: Re-derive checksums from upstream
           command: |
             set -euo pipefail
-            grep -oE '^\s*\["[0-9]+\.[0-9]+\.[0-9]+"\]="[0-9a-f]{128}"' src/scripts/install.sh | tr -d ' ' | sort -V > /tmp/table.txt
+            grep -oE '^\s*\["[0-9]+\.[0-9]+\.[0-9]+/noarch"\]="[0-9a-f]{128}"' src/scripts/install.sh | tr -d ' ' | sort -V > /tmp/table.txt
             # Anchor purely on the recorded checksums, avoiding GitHub API rate limits.
             grep -vE '^\s*(#|$)' src/scripts/upstream_checksums.txt | awk '{ print $1, $2 }' \
               | SKIP_RELEASE_NOTES=true xargs -P 6 -n 2 sh -c 'bash src/scripts/install_hash.sh -v "$1" -c "$2"' _ \
-              | sort -V > /tmp/derived.txt
+              | tr -d ' ' | sort -V > /tmp/derived.txt
             diff /tmp/table.txt /tmp/derived.txt
             echo "All $(wc -l < /tmp/table.txt) checksums re-derived from upstream."
 
