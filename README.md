@@ -193,7 +193,7 @@ extracts it to `install_path`, and symlinks `zap.sh` into `bin_path`. If
 
 | Parameter | Default | Description |
 |---|---|---|
-| `caching` | `true` | Cache the release archive, keyed by version. |
+| `caching` | `true` | Cache the release archive, keyed by version, CPU architecture and home directory. |
 | `install_path` | `$HOME/zap` | Absolute directory to extract ZAP into. Must not exist or be empty. |
 | `bin_path` | `$HOME/bin` | Absolute directory for the `zap.sh` symlink. |
 | `verify_checksums` | `strict` | `strict`, `known_versions`, or `false`. |
@@ -214,8 +214,9 @@ checksum table fail before anything is downloaded, until the orb is upgraded
 to pin them. With `known_versions`, they install unverified with a warning,
 and `false` turns verification off for every version.
 
-**Caching.** The archive is cached under a key made of the version and the
-CPU architecture (`zap-scanner-orb-v1-<version>-…`). Only verified archives
+**Caching.** The archive is cached under a key made of the version, the CPU
+architecture and the home directory (`zap-scanner-orb-v1-<version>-…`), since
+a cache is restored to the absolute path it was saved from. Only verified archives
 are cached, and a restored archive is verified again before it is used. If a
 cached archive no longer matches its checksum, it is discarded and downloaded
 again rather than failing the build.

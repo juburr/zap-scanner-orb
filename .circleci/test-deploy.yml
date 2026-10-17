@@ -522,10 +522,12 @@ jobs:
           command: dnf install -y java-21-openjdk-headless git-core openssh-clients wget diffutils python3 openssl
       - checkout
       - run:
+          # This job runs as root, but seeds its tests from the archive the
+          # cimg jobs cached under /home/circleci, so it uses their key.
           name: Prepare the install cache key
-          command: uname -m > /tmp/zap-scanner-orb-arch
+          command: echo "$(uname -m) /home/circleci" > /tmp/zap-scanner-orb-cache-key
       - restore_cache:
-          key: zap-scanner-orb-v1-2.17.0-{{ checksum "/tmp/zap-scanner-orb-arch" }}
+          key: zap-scanner-orb-v1-2.17.0-{{ checksum "/tmp/zap-scanner-orb-cache-key" }}
       - run:
           name: Run install script tests
           command: SEED_ARCHIVE=/home/circleci/.cache/zap-scanner-orb/2.17.0/noarch/ZAP_2.17.0_Linux.tar.gz bash .circleci/scripts/install_script_tests.sh
@@ -545,9 +547,9 @@ jobs:
       - checkout
       - run:
           name: Prepare the install cache key
-          command: uname -m > /tmp/zap-scanner-orb-arch
+          command: echo "$(uname -m) ${HOME}" > /tmp/zap-scanner-orb-cache-key
       - restore_cache:
-          key: zap-scanner-orb-v1-2.17.0-{{ checksum "/tmp/zap-scanner-orb-arch" }}
+          key: zap-scanner-orb-v1-2.17.0-{{ checksum "/tmp/zap-scanner-orb-cache-key" }}
       - run:
           name: Verify the cached archive
           command: |
@@ -583,9 +585,9 @@ jobs:
       - checkout
       - run:
           name: Prepare the install cache key
-          command: uname -m > /tmp/zap-scanner-orb-arch
+          command: echo "$(uname -m) ${HOME}" > /tmp/zap-scanner-orb-cache-key
       - restore_cache:
-          key: zap-scanner-orb-v1-2.17.0-{{ checksum "/tmp/zap-scanner-orb-arch" }}
+          key: zap-scanner-orb-v1-2.17.0-{{ checksum "/tmp/zap-scanner-orb-cache-key" }}
       - run:
           name: Run install script tests
           command: SEED_ARCHIVE=/home/circleci/.cache/zap-scanner-orb/2.17.0/noarch/ZAP_2.17.0_Linux.tar.gz bash .circleci/scripts/install_script_tests.sh

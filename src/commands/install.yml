@@ -19,9 +19,9 @@ parameters:
     type: boolean
     default: true
     description: >
-      Cache the downloaded release archive between jobs, keyed by version.
-      Only verified archives are cached, and a cached archive is verified
-      again before it is installed.
+      Cache the downloaded release archive between jobs, keyed by version,
+      CPU architecture and home directory. Only verified archives are cached,
+      and a cached archive is verified again before it is installed.
   install_path:
     type: string
     default: ""
@@ -50,11 +50,14 @@ steps:
       steps:
         # The cache key names the CPU with uname -m rather than {{ arch }},
         # which also encodes the CPU model and would split the cache by host.
+        # It also names HOME: a cache is restored to the absolute path it was
+        # saved from, so executors with different home directories can't
+        # share one.
         - run:
             name: Prepare ZAP cache key
-            command: uname -m > /tmp/zap-scanner-orb-arch
+            command: echo "$(uname -m) ${HOME}" > /tmp/zap-scanner-orb-cache-key
         - restore_cache:
-            key: zap-scanner-orb-v1-<< parameters.version >>-{{ checksum "/tmp/zap-scanner-orb-arch" }}
+            key: zap-scanner-orb-v1-<< parameters.version >>-{{ checksum "/tmp/zap-scanner-orb-cache-key" }}
   - run:
       name: Install ZAP << parameters.version >>
       environment:
@@ -68,6 +71,6 @@ steps:
       condition: << parameters.caching >>
       steps:
         - save_cache:
-            key: zap-scanner-orb-v1-<< parameters.version >>-{{ checksum "/tmp/zap-scanner-orb-arch" }}
+            key: zap-scanner-orb-v1-<< parameters.version >>-{{ checksum "/tmp/zap-scanner-orb-cache-key" }}
             paths:
               - ~/.cache/zap-scanner-orb
