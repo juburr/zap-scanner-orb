@@ -162,8 +162,14 @@ tool_install() {
     fi
 
     if [[ -n "${staging}" ]]; then
-        printf 'version=%s\nsha512=%s\n' "${ORB_VERSION}" "$(sha512sum "${ORB_VERIFIED_FILE}" | awk '{ print $1 }')" \
-            > "${staging}/.zap-scanner-orb"
+        # An unverified install may run without sha512sum. Its marker then has
+        # no sha512 line, which a later verified install refuses.
+        {
+            printf 'version=%s\n' "${ORB_VERSION}"
+            if command -v sha512sum > /dev/null 2>&1; then
+                printf 'sha512=%s\n' "$(sha512sum "${ORB_VERIFIED_FILE}" | awk '{ print $1 }')"
+            fi
+        } > "${staging}/.zap-scanner-orb"
         chmod 755 "${staging}"
         if [[ -d "${ORB_INSTALL_PATH}" ]]; then
             rmdir "${ORB_INSTALL_PATH}"
@@ -336,7 +342,11 @@ orb_init() {
 
     ORB_ASSET_NAME=$(tool_asset_name "${ORB_VERSION}" "${ORB_ARCH}")
     ORB_ARCHIVE_MEMBER=$(tool_archive_member "${ORB_VERSION}" "${ORB_ARCH}")
-    orb_require_tools sha512sum mktemp
+    orb_require_tools mktemp
+    # Only verification needs sha512sum, so the opt-out modes run without it.
+    if [[ -n "${ORB_EXPECTED_SHA512}" ]]; then
+        orb_require_tools sha512sum
+    fi
     if [[ -n "${ORB_ARCHIVE_MEMBER}" ]]; then
         orb_require_tools tar gzip
     fi
