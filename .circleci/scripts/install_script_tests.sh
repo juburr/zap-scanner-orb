@@ -353,7 +353,7 @@ INSTALL_SCRIPT="${WORK}/install_bad_checksum.sh" run_install PARAM_CACHING=false
     PARAM_INSTALL_PATH="${WORK}/badsum/zap" PARAM_BIN_PATH="${WORK}/badsum/bin"
 check "exit code is non-zero" rc_is_nonzero
 check "checksum verification failed" output_has "Checksum verification failed."
-check "refused to install" output_has "failed verification and was not installed"
+check "refused to install" output_has "download was rejected and not installed"
 check "nothing installed" test ! -e "${WORK}/badsum/zap"
 check "no staging directories left" no_staging_dirs "${WORK}/badsum"
 check "no symlink created" test ! -e "${WORK}/badsum/bin/zap.sh"

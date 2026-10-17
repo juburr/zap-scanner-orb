@@ -525,7 +525,9 @@ jobs:
           # This job runs as root, but seeds its tests from the archive the
           # cimg jobs cached under /home/circleci, so it uses their key.
           name: Prepare the install cache key
-          command: echo "$(uname -m) /home/circleci" > /tmp/zap-scanner-orb-cache-key
+          command: |
+            HOME=/home/circleci PARAM_VERSION=2.17.0 ORB_CACHE_KEY_FILE=/tmp/zap-scanner-orb-cache-key \
+              bash src/scripts/cache_key.sh
       - restore_cache:
           key: zap-scanner-orb-v1-2.17.0-{{ checksum "/tmp/zap-scanner-orb-cache-key" }}
       - run:
@@ -547,7 +549,7 @@ jobs:
       - checkout
       - run:
           name: Prepare the install cache key
-          command: echo "$(uname -m) ${HOME}" > /tmp/zap-scanner-orb-cache-key
+          command: PARAM_VERSION=2.17.0 ORB_CACHE_KEY_FILE=/tmp/zap-scanner-orb-cache-key bash src/scripts/cache_key.sh
       - restore_cache:
           key: zap-scanner-orb-v1-2.17.0-{{ checksum "/tmp/zap-scanner-orb-cache-key" }}
       - run:
@@ -585,7 +587,7 @@ jobs:
       - checkout
       - run:
           name: Prepare the install cache key
-          command: echo "$(uname -m) ${HOME}" > /tmp/zap-scanner-orb-cache-key
+          command: PARAM_VERSION=2.17.0 ORB_CACHE_KEY_FILE=/tmp/zap-scanner-orb-cache-key bash src/scripts/cache_key.sh
       - restore_cache:
           key: zap-scanner-orb-v1-2.17.0-{{ checksum "/tmp/zap-scanner-orb-cache-key" }}
       - run:
