@@ -4,6 +4,9 @@
 # cases that can't be asserted through the orb command in a CircleCI job
 # (which simply fails the job). Requires Java 17+ on the PATH.
 #
+# The behaviors every orb's install shares are covered offline by
+# install_test.sh; this exercises ZAP's own behavior against real releases.
+#
 # Optional environment:
 #   SEED_ARCHIVE  Path to an already-downloaded ZAP_2.17.0_Linux.tar.gz, used to
 #                 avoid re-downloading it (e.g. a restored CircleCI cache).
@@ -23,11 +26,15 @@ LEGACY_VERSION="2.4.0"
 WORK=$(mktemp -d)
 trap 'rm -rf "${WORK}"' EXIT
 
-# Shared download cache for the default version, populated by the first test.
-CACHE="${WORK}/cache"
-mkdir -p "${CACHE}"
+# Runs share one HOME, and with it the install's download cache, so the default
+# version is downloaded once (by the first test) or seeded from SEED_ARCHIVE.
+# Tests that must see a download, or must prove there was none, use a HOME of
+# their own.
+TEST_HOME="${WORK}/home"
+CACHED_ARCHIVE="${TEST_HOME}/.cache/zap-scanner-orb/${VERSION}/noarch/ZAP_${VERSION}_Linux.tar.gz"
+mkdir -p "$(dirname "${CACHED_ARCHIVE}")"
 if [[ -n "${SEED_ARCHIVE:-}" ]] && [[ -f "${SEED_ARCHIVE}" ]]; then
-    cp "${SEED_ARCHIVE}" "${CACHE}/zap.tar.gz"
+    cp "${SEED_ARCHIVE}" "${CACHED_ARCHIVE}"
 fi
 
 PASSED=0
@@ -78,8 +85,9 @@ run_install() {
     local script="${INSTALL_SCRIPT:-${SCRIPT}}"
     : > "${BASH_ENV_FILE}"
     OUTPUT=$(env \
+        HOME="${TEST_HOME}" \
         BASH_ENV="${BASH_ENV_FILE}" \
-        ZAP_ORB_DOWNLOAD_DIR="${CACHE}" \
+        PARAM_CACHING=true \
         PARAM_INSTALL_PATH="" \
         PARAM_BIN_PATH="" \
         PARAM_VERIFY_CHECKSUMS="strict" \
@@ -116,7 +124,7 @@ make_sandbox_path() {
         fi
     done
 }
-BASE_TOOLS=(bash env awk grep sed head tail cat cut sort ls find mkdir mktemp mv rm rmdir ln chmod dirname tar gzip sha512sum)
+BASE_TOOLS=(bash env awk grep sed head tail cat cut sort ls find mkdir mktemp mv cp rm rmdir ln chmod dirname uname tar gzip sha512sum)
 
 # Writes a fake JAVA_HOME whose java prints the given -version banner.
 make_fake_java() {
@@ -131,8 +139,8 @@ make_fake_java() {
 make_script_without_checksum() {
     local version=$1
     local dest=$2
-    sed "/\[\"${version//./\\.}\"\]=\"[0-9a-f]\{128\}\"/d" "${SCRIPT}" > "${dest}"
-    ! grep -q "\[\"${version}\"\]=" "${dest}"
+    sed "/\[\"${version//./\\.}\/noarch\"\]=\"[0-9a-f]\{128\}\"/d" "${SCRIPT}" > "${dest}"
+    ! grep -q "\[\"${version}/noarch\"\]=" "${dest}"
 }
 
 # ---------------------------------------------------------------------------
@@ -142,15 +150,15 @@ make_script_without_checksum() {
 begin "fresh install (strict)"
 run_install PARAM_INSTALL_PATH="${WORK}/a/zap" PARAM_BIN_PATH="${WORK}/a/bin"
 check "exit code is zero" rc_is_zero
-check "checksum verified" output_has "Checksum verification passed!"
+check "checksum verified" output_has "Checksum verification passed."
 check "no unsupported-version warning for the latest release" output_lacks "is not the latest release"
 check "zap.sh is executable" test -x "${WORK}/a/zap/zap.sh"
 check "release jar present" test -f "${WORK}/a/zap/zap-${VERSION}.jar"
 check "symlink points at install" test "$(readlink "${WORK}/a/bin/zap.sh")" = "${WORK}/a/zap/zap.sh"
 check "marker records version" grep -qx "version=${VERSION}" "${WORK}/a/zap/.zap-scanner-orb"
 check "no staging directories left" no_staging_dirs "${WORK}/a"
-check "archive kept for caching" test -f "${CACHE}/zap.tar.gz"
-check "no partial download left" test ! -e "${CACHE}/zap.tar.gz.partial"
+check "archive kept for caching" test -f "${CACHED_ARCHIVE}"
+check "no partial download left" test ! -e "${CACHED_ARCHIVE}.partial"
 version_output=$("${WORK}/a/bin/zap.sh" -cmd -version 2>&1)
 check "zap.sh -cmd -version reports ${VERSION}" grep -qx "${VERSION}" <<< "${version_output}"
 resolved=$(resolve_env)
@@ -162,9 +170,9 @@ end
 begin "cache hit"
 run_install PARAM_INSTALL_PATH="${WORK}/c/zap" PARAM_BIN_PATH="${WORK}/c/bin"
 check "exit code is zero" rc_is_zero
-check "used cached archive" output_has "Using cached ZAP ${VERSION} archive."
+check "used cached archive" output_has "Using ZAP_${VERSION}_Linux.tar.gz from the cache."
 check "did not download" output_lacks "Downloading"
-check "cached archive still verified" output_has "Checksum verification passed!"
+check "cached archive still verified" output_has "Checksum verification passed."
 end
 
 begin "idempotent re-install"
@@ -230,29 +238,30 @@ make_script_without_checksum "${VERSION}" "${WORK}/install_no_checksum.sh"
 INSTALL_SCRIPT="${WORK}/install_no_checksum.sh" run_install PARAM_VERIFY_CHECKSUMS=known_versions \
     PARAM_INSTALL_PATH="${WORK}/known/zap" PARAM_BIN_PATH="${WORK}/known/bin"
 check "exit code is zero" rc_is_zero
-check "warned about missing checksum" output_has "WARN: No checksum available for version ${VERSION}"
-check "skipped verification" output_lacks "Checksum verification passed!"
+check "warned about missing checksum" output_has "has no checksum for ZAP ${VERSION}"
+check "skipped verification" output_lacks "Checksum verification passed."
 check "installed" test -f "${WORK}/known/zap/zap.sh"
 end
 
 begin "verify_checksums=false installs with a warning"
 run_install PARAM_VERIFY_CHECKSUMS=false PARAM_INSTALL_PATH="${WORK}/nocheck/zap" PARAM_BIN_PATH="${WORK}/nocheck/bin"
 check "exit code is zero" rc_is_zero
-check "warned that validation is disabled" output_has "WARN: Checksum validation is disabled"
-check "skipped verification" output_lacks "Checksum verification passed!"
+check "warned that validation is disabled" output_has "WITHOUT checksum verification"
+check "skipped verification" output_lacks "Checksum verification passed."
 end
 
 begin "tampered cache is discarded and re-downloaded"
-mkdir -p "${WORK}/tampered"
-cp "${CACHE}/zap.tar.gz" "${WORK}/tampered/zap.tar.gz"
-printf 'x' >> "${WORK}/tampered/zap.tar.gz"
-run_install ZAP_ORB_DOWNLOAD_DIR="${WORK}/tampered" PARAM_INSTALL_PATH="${WORK}/t/zap" PARAM_BIN_PATH="${WORK}/t/bin"
+tampered_archive="${WORK}/tampered-home/${CACHED_ARCHIVE#"${TEST_HOME}/"}"
+mkdir -p "$(dirname "${tampered_archive}")"
+cp "${CACHED_ARCHIVE}" "${tampered_archive}"
+printf 'x' >> "${tampered_archive}"
+run_install HOME="${WORK}/tampered-home" PARAM_INSTALL_PATH="${WORK}/t/zap" PARAM_BIN_PATH="${WORK}/t/bin"
 check "exit code is zero" rc_is_zero
-check "warned about the cached archive" output_has "Cached archive does not match"
+check "warned about the cached archive" output_has "failed verification. Discarding it"
 check "re-downloaded" output_has "Downloading"
-check "re-verified" output_has "Checksum verification passed!"
-check "cache now holds the good archive" cmp -s "${CACHE}/zap.tar.gz" "${WORK}/tampered/zap.tar.gz"
-rm -rf "${WORK}/tampered"
+check "re-verified" output_has "Checksum verification passed."
+check "cache now holds the good archive" cmp -s "${CACHED_ARCHIVE}" "${tampered_archive}"
+rm -rf "${WORK}/tampered-home"
 end
 
 begin "installs an archived release from zap-archive on Java 8"
@@ -261,16 +270,16 @@ begin "installs an archived release from zap-archive on Java 8"
 make_fake_java "${WORK}/java8-ok" 'openjdk version "1.8.0_402"'
 make_fake_java "${WORK}/java99-legacy" 'openjdk version "99.0.1" 2099-01-01'
 run_install PATH="${WORK}/java8-ok/bin:${PATH}" JAVA_HOME="${WORK}/java99-legacy" \
-    PARAM_VERSION="${LEGACY_VERSION}" ZAP_ORB_DOWNLOAD_DIR="${WORK}/legacy-dl" \
+    PARAM_VERSION="${LEGACY_VERSION}" HOME="${WORK}/legacy-home" \
     PARAM_INSTALL_PATH="${WORK}/legacy/zap" PARAM_BIN_PATH="${WORK}/legacy/bin"
 check "exit code is zero" rc_is_zero
 check "warned that the release is unsupported" output_has "ZAP ${LEGACY_VERSION} is not the latest release"
-check "fell back from the main repository" output_has "Not available from https://github.com/zaproxy/zaproxy/"
+check "fell back from the main repository" output_has "Could not download https://github.com/zaproxy/zaproxy/"
 check "downloaded from zap-archive" output_has "https://github.com/zaproxy/zap-archive/releases/download/zap-v${LEGACY_VERSION}/"
-check "verified" output_has "Checksum verification passed!"
+check "verified" output_has "Checksum verification passed."
 check "installed ${LEGACY_VERSION}" test -f "${WORK}/legacy/zap/zap-${LEGACY_VERSION}.jar"
 check "used the PATH java, ignoring JAVA_HOME" output_has "(Java 1.8.0_402)"
-rm -rf "${WORK}/legacy-dl"
+rm -rf "${WORK}/legacy-home"
 end
 
 # ---------------------------------------------------------------------------
@@ -278,44 +287,44 @@ end
 # ---------------------------------------------------------------------------
 
 begin "rejects Java 9+ for releases before 2.6.0 without downloading"
-run_install PARAM_VERSION="${LEGACY_VERSION}" ZAP_ORB_DOWNLOAD_DIR="${WORK}/legacy-java-dl" \
+run_install PARAM_VERSION="${LEGACY_VERSION}" HOME="${WORK}/legacy-java-home" \
     PARAM_INSTALL_PATH="${WORK}/legacy-java/zap" PARAM_BIN_PATH="${WORK}/legacy-java/bin"
 check "exit code is non-zero" rc_is_nonzero
 check "explained the failure" output_has "ZAP ${LEGACY_VERSION} only runs on Java 7 or 8"
-check "nothing downloaded" dir_is_empty "${WORK}/legacy-java-dl"
+check "nothing downloaded" output_lacks "Downloading"
 check "nothing installed" test ! -e "${WORK}/legacy-java/zap"
 end
 
 begin "releases before 2.17.0 require java on the PATH"
 make_sandbox_path "${WORK}/sandbox-javahome-only" "${BASE_TOOLS[@]}" curl wget
 run_install PATH="${WORK}/sandbox-javahome-only" JAVA_HOME="${WORK}/java8-ok" PARAM_VERSION="${LEGACY_VERSION}" \
-    ZAP_ORB_DOWNLOAD_DIR="${WORK}/javahome-only-dl" \
+    HOME="${WORK}/javahome-only-home" \
     PARAM_INSTALL_PATH="${WORK}/javahome-only/zap" PARAM_BIN_PATH="${WORK}/javahome-only/bin"
 check "exit code is non-zero" rc_is_nonzero
 check "explained that JAVA_HOME is ignored" output_has "ZAP ${LEGACY_VERSION} ignores JAVA_HOME, so java must be on the PATH"
 check "suggested a Java 8 package for UBI" output_has "dnf install -y java-1.8.0-openjdk-headless"
-check "nothing downloaded" dir_is_empty "${WORK}/javahome-only-dl"
+check "nothing downloaded" output_lacks "Downloading"
 end
 
 begin "fails cleanly for a version that was never published"
 start=${SECONDS}
-run_install PARAM_VERSION="9.9.9" PARAM_VERIFY_CHECKSUMS=known_versions ZAP_ORB_DOWNLOAD_DIR="${WORK}/missing-dl" \
+run_install PARAM_VERSION="9.9.9" PARAM_VERIFY_CHECKSUMS=known_versions HOME="${WORK}/missing-home" \
     PARAM_INSTALL_PATH="${WORK}/missing/zap" PARAM_BIN_PATH="${WORK}/missing/bin"
 check "exit code is non-zero" rc_is_nonzero
 check "tried the main repository" output_has "https://github.com/zaproxy/zaproxy/releases/download/v9.9.9/"
 check "tried zap-archive" output_has "https://github.com/zaproxy/zap-archive/releases/download/zap-v9.9.9/"
-check "explained the failure" output_has "Unable to download ZAP 9.9.9"
+check "explained the failure" output_has "Could not download ZAP 9.9.9"
 check "gave up promptly, since a 404 is not retried" test $((SECONDS - start)) -le 30
-check "no partial download left" dir_is_empty "${WORK}/missing-dl"
+check "nothing cached" dir_is_empty "${WORK}/missing-home/.cache/zap-scanner-orb/9.9.9"
 check "nothing installed" test ! -e "${WORK}/missing/zap"
 end
 
 begin "strict mode rejects an unknown version before downloading"
-INSTALL_SCRIPT="${WORK}/install_no_checksum.sh" run_install ZAP_ORB_DOWNLOAD_DIR="${WORK}/strict-dl2" \
+INSTALL_SCRIPT="${WORK}/install_no_checksum.sh" run_install \
     PARAM_INSTALL_PATH="${WORK}/strict2/zap" PARAM_BIN_PATH="${WORK}/strict2/bin"
 check "exit code is non-zero" rc_is_nonzero
-check "explained the failure" output_has "No checksum available for version ${VERSION} and strict mode is enabled"
-check "nothing downloaded" dir_is_empty "${WORK}/strict-dl2"
+check "explained the failure" output_has "has no checksum for ZAP ${VERSION} (noarch), so it cannot be verified (verify_checksums: strict)"
+check "nothing downloaded" output_lacks "Downloading"
 check "nothing installed" test ! -e "${WORK}/strict2/zap"
 end
 
@@ -329,31 +338,29 @@ for verify in "${default_verify}" ""; do
     label="verify_checksums '${verify:-<empty>}'"
     case_dir="${WORK}/default-${verify:-empty}"
     INSTALL_SCRIPT="${WORK}/install_no_checksum.sh" run_install PARAM_VERIFY_CHECKSUMS="${verify}" \
-        ZAP_ORB_DOWNLOAD_DIR="${case_dir}/dl" PARAM_INSTALL_PATH="${case_dir}/zap" PARAM_BIN_PATH="${case_dir}/bin"
+        PARAM_INSTALL_PATH="${case_dir}/zap" PARAM_BIN_PATH="${case_dir}/bin"
     check "${label} is rejected" rc_is_nonzero
-    check "${label} explained" output_has "No checksum available for version ${VERSION} and strict mode is enabled"
-    check "${label} downloaded nothing" dir_is_empty "${case_dir}/dl"
+    check "${label} explained" output_has "(verify_checksums: strict)"
+    check "${label} downloaded nothing" output_lacks "Downloading"
     check "${label} installed nothing" test ! -e "${case_dir}/zap"
 done
 end
 
 begin "tampered archive fails verification when it is freshly downloaded"
 # Simulate a bad upstream by pointing the table at the wrong checksum.
-sed "s/\[\"${VERSION//./\\.}\"\]=\"[0-9a-f]\{128\}\"/[\"${VERSION}\"]=\"$(printf '0%.0s' {1..128})\"/" "${SCRIPT}" > "${WORK}/install_bad_checksum.sh"
-mkdir -p "${WORK}/badsum-dl"
-cp "${CACHE}/zap.tar.gz" "${WORK}/badsum-dl/zap.tar.gz"
-INSTALL_SCRIPT="${WORK}/install_bad_checksum.sh" run_install ZAP_ORB_DOWNLOAD_DIR="${WORK}/badsum-dl" \
+sed "s/\[\"${VERSION//./\\.}\/noarch\"\]=\"[0-9a-f]\{128\}\"/[\"${VERSION}\/noarch\"]=\"$(printf '0%.0s' {1..128})\"/" "${SCRIPT}" > "${WORK}/install_bad_checksum.sh"
+INSTALL_SCRIPT="${WORK}/install_bad_checksum.sh" run_install PARAM_CACHING=false \
     PARAM_INSTALL_PATH="${WORK}/badsum/zap" PARAM_BIN_PATH="${WORK}/badsum/bin"
 check "exit code is non-zero" rc_is_nonzero
-check "checksum verification failed" output_has "ERROR: Checksum verification failed!"
+check "checksum verification failed" output_has "Checksum verification failed."
+check "refused to install" output_has "failed verification and was not installed"
 check "nothing installed" test ! -e "${WORK}/badsum/zap"
 check "no staging directories left" no_staging_dirs "${WORK}/badsum"
 check "no symlink created" test ! -e "${WORK}/badsum/bin/zap.sh"
-rm -rf "${WORK}/badsum-dl"
 end
 
 begin "rejects malformed versions"
-for bad_version in "" "latest" "2.17" "v2.17.0" "2.17.0-rc1" "2.17.0/../../evil" '2.17.0;id'; do
+for bad_version in "" "latest" "-2.17.0" "2.17.0 x" "2.17.0/../../evil" '2.17.0;id'; do
     run_install PARAM_VERSION="${bad_version}" PARAM_INSTALL_PATH="${WORK}/badver/zap" PARAM_BIN_PATH="${WORK}/badver/bin"
     check "'${bad_version}' is rejected" rc_is_nonzero
     check "'${bad_version}' explained" output_has "Invalid ZAP version"
@@ -361,19 +368,25 @@ done
 check "nothing installed" test ! -e "${WORK}/badver/zap"
 end
 
+begin "ignores a leading v in the version"
+run_install PARAM_VERSION="v${VERSION}" PARAM_INSTALL_PATH="${WORK}/vprefix/zap" PARAM_BIN_PATH="${WORK}/vprefix/bin"
+check "exit code is zero" rc_is_zero
+check "installed ${VERSION}" grep -qx "version=${VERSION}" "${WORK}/vprefix/zap/.zap-scanner-orb"
+end
+
 begin "rejects invalid verify_checksums"
 run_install PARAM_VERIFY_CHECKSUMS=maybe PARAM_INSTALL_PATH="${WORK}/badverify/zap" PARAM_BIN_PATH="${WORK}/badverify/bin"
 check "exit code is non-zero" rc_is_nonzero
-check "explained the failure" output_has "Invalid verify_checksums value 'maybe'"
+check "explained the failure" output_has "verify_checksums must be strict, known_versions or false, not 'maybe'"
 end
 
 begin "rejects relative paths"
 run_install PARAM_INSTALL_PATH="relative/zap" PARAM_BIN_PATH="${WORK}/rel/bin"
 check "relative install_path rejected" rc_is_nonzero
-check "install_path explained" output_has "'install_path' must be an absolute path"
+check "install_path explained" output_has "install_path must be an absolute path"
 run_install PARAM_INSTALL_PATH="${WORK}/rel/zap" PARAM_BIN_PATH="bin"
 check "relative bin_path rejected" rc_is_nonzero
-check "bin_path explained" output_has "'bin_path' must be an absolute path"
+check "bin_path explained" output_has "bin_path must be an absolute path"
 end
 
 begin "refuses a non-empty install_path"
@@ -409,12 +422,12 @@ end
 
 begin "fails before downloading when Java is missing"
 make_sandbox_path "${WORK}/sandbox-nojava" "${BASE_TOOLS[@]}" curl wget
-run_install PATH="${WORK}/sandbox-nojava" JAVA_HOME="" ZAP_ORB_DOWNLOAD_DIR="${WORK}/nojava-dl" \
+run_install PATH="${WORK}/sandbox-nojava" JAVA_HOME="" HOME="${WORK}/nojava-home" \
     PARAM_INSTALL_PATH="${WORK}/nojava/zap" PARAM_BIN_PATH="${WORK}/nojava/bin"
 check "exit code is non-zero" rc_is_nonzero
 check "explained the failure" output_has "no java executable was found"
 check "explained how to install Java on UBI" output_has "dnf install -y java-21-openjdk-headless"
-check "nothing downloaded" dir_is_empty "${WORK}/nojava-dl"
+check "nothing downloaded" output_lacks "Downloading"
 end
 
 begin "rejects Java older than the release's minimum"
@@ -452,18 +465,18 @@ for missing in tar:tar gzip:gzip sha512sum:coreutils; do
         fi
     done
     make_sandbox_path "${WORK}/sandbox-no-${missing_tool}" "${sandbox_tools[@]}"
-    run_install PATH="${WORK}/sandbox-no-${missing_tool}" ZAP_ORB_DOWNLOAD_DIR="${WORK}/no-${missing_tool}-dl" \
+    run_install PATH="${WORK}/sandbox-no-${missing_tool}" HOME="${WORK}/no-${missing_tool}-home" \
         PARAM_INSTALL_PATH="${WORK}/no-${missing_tool}/zap" PARAM_BIN_PATH="${WORK}/no-${missing_tool}/bin"
     check "exit code is non-zero" rc_is_nonzero
-    check "named the missing tool" output_has "Required tool '${missing_tool}' is not available."
+    check "named the missing tool" output_has "needs '${missing_tool}', which is not available."
     check "named the package that provides it" output_has "'microdnf install -y ${missing#*:}'"
-    check "nothing downloaded" dir_is_empty "${WORK}/no-${missing_tool}-dl"
+    check "nothing downloaded" output_lacks "Downloading"
     end
 done
 
 begin "fails when neither curl nor wget is available"
 make_sandbox_path "${WORK}/sandbox-nodl" "${BASE_TOOLS[@]}" java
-run_install PATH="${WORK}/sandbox-nodl" ZAP_ORB_DOWNLOAD_DIR="${WORK}/nodl-dl" \
+run_install PATH="${WORK}/sandbox-nodl" HOME="${WORK}/nodl-home" \
     PARAM_INSTALL_PATH="${WORK}/nodl/zap" PARAM_BIN_PATH="${WORK}/nodl/bin"
 check "exit code is non-zero" rc_is_nonzero
 check "explained the failure" output_has "Neither curl nor wget is available"
@@ -472,11 +485,11 @@ end
 begin "downloads with wget when curl is unavailable"
 if command -v wget &> /dev/null; then
     make_sandbox_path "${WORK}/sandbox-wget" "${BASE_TOOLS[@]}" java wget
-    run_install PATH="${WORK}/sandbox-wget" ZAP_ORB_DOWNLOAD_DIR="${WORK}/wget-dl" PARAM_VERSION="${ALT_VERSION}" \
+    run_install PATH="${WORK}/sandbox-wget" HOME="${WORK}/wget-home" PARAM_VERSION="${ALT_VERSION}" \
         PARAM_INSTALL_PATH="${WORK}/wget/zap" PARAM_BIN_PATH="${WORK}/wget/bin"
     check "exit code is zero" rc_is_zero
     check "downloaded" output_has "Downloading"
-    check "verified" output_has "Checksum verification passed!"
+    check "verified" output_has "Checksum verification passed."
     check "warned that the release is unsupported" output_has "ZAP ${ALT_VERSION} is not the latest release"
     check "installed ${ALT_VERSION}" test -f "${WORK}/wget/zap/zap-${ALT_VERSION}.jar"
 else
@@ -487,13 +500,13 @@ end
 # Reuses the archive downloaded above, if any.
 begin "enforces the real Java minimum when the launcher understates it"
 make_fake_java "${WORK}/java11-path" 'openjdk version "11.0.22" 2024-01-16'
-run_install PATH="${WORK}/java11-path/bin:${PATH}" ZAP_ORB_DOWNLOAD_DIR="${WORK}/wget-dl" PARAM_VERSION="2.16.0" \
+run_install PATH="${WORK}/java11-path/bin:${PATH}" HOME="${WORK}/wget-home" PARAM_VERSION="2.16.0" \
     PARAM_INSTALL_PATH="${WORK}/override/zap" PARAM_BIN_PATH="${WORK}/override/bin"
 check "exit code is non-zero" rc_is_nonzero
 check "required Java 17 despite the launcher declaring 11" output_has "ZAP 2.16.0 requires Java 17 or newer, but found Java 11.0.22"
 check "nothing installed" test ! -e "${WORK}/override/zap"
 check "no staging directories left" no_staging_dirs "${WORK}/override"
-rm -rf "${WORK}/wget-dl"
+rm -rf "${WORK}/wget-home"
 end
 
 # ---------------------------------------------------------------------------
