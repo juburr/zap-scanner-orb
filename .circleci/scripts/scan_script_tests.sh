@@ -78,6 +78,9 @@ FAKE_STATE="${WORK}/fake-state"
 mkdir -p "${FAKE_BIN}"
 cat > "${FAKE_BIN}/zap.sh" << 'EOF'
 #!/bin/bash
+# The xtrace tests check what scan.sh prints. Unlike the real zap.sh, this
+# fake expands the header value, so it must not trace itself through BASH_ENV.
+set +o xtrace
 if [[ "$*" == "-cmd -version" ]]; then
     echo "${FAKE_ZAP_VERSION:-2.17.0}"
     exit 0
@@ -122,13 +125,27 @@ DEAD_TARGET="http://127.0.0.1:9/"
 
 # run_scan [VAR=value ...] -- runs the scan script against the fake zap.sh with
 # a clean set of parameters, overridden by the given assignments. Sets RC and
-# OUTPUT. Pass PATH=... to use a different zap.sh. BASH_ENV is unset because
-# bash would otherwise source the PATH and ZAP_VERSION written by install.
+# OUTPUT, which holds both stdout and stderr. Pass PATH=... to use a different
+# zap.sh. BASH_ENV is unset because bash would otherwise source the PATH and
+# ZAP_VERSION written by install.
 REPORTS="${WORK}/reports"
 run_scan() {
+    OUTPUT=$(scan_command "$@" 2>&1)
+    RC=$?
+}
+
+# run_scan_split [VAR=value ...] -- as run_scan, but also keeps stdout and
+# stderr apart in ${WORK}/stdout and ${WORK}/stderr.
+run_scan_split() {
+    scan_command "$@" > "${WORK}/stdout" 2> "${WORK}/stderr"
+    RC=$?
+    OUTPUT=$(cat "${WORK}/stdout" "${WORK}/stderr")
+}
+
+scan_command() {
     rm -rf "${FAKE_STATE}" "${REPORTS}"
     mkdir -p "${WORK}/tmp"
-    OUTPUT=$(env -u BASH_ENV -u ZAP_VERSION -u FAKE_RC -u FAKE_REPORT \
+    env -u BASH_ENV -u ZAP_VERSION -u FAKE_RC -u FAKE_REPORT \
         -u ZAP_AUTH_HEADER_VALUE -u ZAP_AUTH_HEADER -u ZAP_AUTH_HEADER_SITE \
         PATH="${FAKE_BIN}:${PATH}" \
         TMPDIR="${WORK}/tmp" \
@@ -150,8 +167,7 @@ run_scan() {
         PARAM_OUTPUT_DIR="${REPORTS}" \
         PARAM_EXTRA_ARGS="" \
         "$@" \
-        bash "${SCRIPT}" 2>&1)
-    RC=$?
+        bash "${SCRIPT}"
 }
 
 # Succeeds if the fake zap.sh received exactly these arguments, in order.
@@ -404,6 +420,22 @@ check "exit code is zero" rc_is_zero
 check "passed -Xmx1g" grep -qx -- "-Xmx1g" "${FAKE_STATE}/args"
 end
 
+# With no ignore_rules and no extra_args, the rule and argument arrays are
+# empty. This matters on bash older than 4.4: under set -u it treats an empty
+# array as unset, so "${arr[@]}" stops the scan with "unbound variable". The
+# script expands them as ${arr[@]+"${arr[@]}"}. On any bash, this checks that
+# the empty arrays add no argument to zap.sh and no alert filter to the plan.
+begin "scans with no ignore_rules or extra_args"
+run_scan FAKE_REPORT="${WORK}/report-none.json" PARAM_IGNORE_RULES="" PARAM_EXTRA_ARGS=""
+check "exit code is zero" rc_is_zero
+check "did not stop on an empty array" output_lacks "unbound variable"
+zap_dir=$(sed -n '4p' "${FAKE_STATE}/args" 2> /dev/null)
+plan_path=$(tail -n 1 "${FAKE_STATE}/args" 2> /dev/null)
+check "passes only the standard arguments" args_are -cmd -silent -dir "${zap_dir}" -Xmx1g \
+    -config pscans.threads=1 -autorun "${plan_path}"
+check "has no alertFilter job" file_lacks "${FAKE_STATE}/plan" "alertFilter"
+end
+
 begin "expands environment variables in extra_args"
 if command -v circleci &> /dev/null; then
     run_scan FAKE_REPORT="${WORK}/report-none.json" SCAN_TEST_TIMEOUT="45" \
@@ -467,6 +499,18 @@ check "exit code is zero" rc_is_zero
 check "ZAP saw the header, restricted to the target" auth_env_is "Bearer s3cr3t-value" "Authorization" "127.0.0.1"
 check "printed the header name and site" output_has "AUTH_HEADER: Authorization (value from \$ZAP_AUTH_HEADER_VALUE)"
 check "never exposed the value" secret_absent "s3cr3t-value"
+end
+
+# A job can turn xtrace on for every step, through SHELLOPTS or a set -x in
+# BASH_ENV. The script turns it off before it reads the value.
+begin "never exposes the header value when the job turns on xtrace"
+printf 'set -x\n' > "${WORK}/xtrace-env"
+run_scan FAKE_REPORT="${WORK}/report-none.json" ZAP_AUTH_HEADER_VALUE="Bearer s3cr3t-value" SHELLOPTS=xtrace
+check "exit code is zero with SHELLOPTS=xtrace" rc_is_zero
+check "never exposed the value with SHELLOPTS=xtrace" secret_absent "s3cr3t-value"
+run_scan FAKE_REPORT="${WORK}/report-none.json" ZAP_AUTH_HEADER_VALUE="Bearer s3cr3t-value" BASH_ENV="${WORK}/xtrace-env"
+check "exit code is zero with set -x in BASH_ENV" rc_is_zero
+check "never exposed the value with set -x in BASH_ENV" secret_absent "s3cr3t-value"
 end
 
 begin "reads the header value from a named variable"
@@ -584,6 +628,27 @@ begin "fails when ZAP crashes"
 run_scan FAKE_RC=137
 check "exit code is non-zero" rc_is_nonzero
 check "explained the failure" output_has "ZAP scan failed (exit code 137)"
+end
+
+begin "writes errors to stderr"
+run_scan_split PARAM_FAIL_ON="critical"
+check "exit code is non-zero" rc_is_nonzero
+check "wrote the error to stderr" file_has "${WORK}/stderr" "ERROR: Invalid fail_on 'critical'"
+check "wrote no error to stdout" file_lacks "${WORK}/stdout" "ERROR:"
+run_scan_split FAKE_REPORT="${WORK}/report-medium.json"
+check "exit code is non-zero after a threshold failure" rc_is_nonzero
+check "wrote the threshold failure to stderr" file_has "${WORK}/stderr" "ERROR: 1 alert type(s) at or above fail_on 'medium'"
+check "wrote the summary to stdout" file_has "${WORK}/stdout" "Alerts: 0 high, 1 medium, 1 low, 0 informational."
+check "wrote no error to stdout after a threshold failure" file_lacks "${WORK}/stdout" "ERROR:"
+end
+
+begin "writes warnings to stderr"
+run_scan_split FAKE_RC=2 FAKE_REPORT="${WORK}/report-none.json" PARAM_API_DEFINITION="${WORK}/nope.json"
+check "exit code is zero" rc_is_zero
+check "wrote the api_definition warning to stderr" file_has "${WORK}/stderr" "WARN: 'api_definition' is ignored unless scan_type is api."
+check "wrote the plan warning to stderr" file_has "${WORK}/stderr" "WARN: ZAP scan passed with plan warnings."
+check "wrote no warning to stdout" file_lacks "${WORK}/stdout" "WARN:"
+check "wrote the report location to stdout" file_has "${WORK}/stdout" "Reports written to ${REPORTS}."
 end
 
 begin "passes with a warning when ZAP reports plan warnings"
