@@ -80,9 +80,12 @@ risk_code() {
     esac
 }
 
-# Quotes a value as a single-quoted YAML scalar.
+# Quotes a value as a single-quoted YAML scalar. The doubled quote comes from
+# a variable: bash 4.0 to 4.2 keep the backslashes of an inline \'\' in the
+# replacement, so a ' in the value became \'\' and broke the plan.
 yaml_quote() {
-    printf "'%s'" "${1//\'/\'\'}"
+    local doubled="''"
+    printf "'%s'" "${1//\'/${doubled}}"
 }
 
 # Prints the lowercased host of an http(s) URL, without userinfo, port, or the
