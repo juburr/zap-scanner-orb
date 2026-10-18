@@ -228,11 +228,11 @@ jobs:
           auth_header: X-Api-Key
           auth_header_value: SCAN_TOKEN
           fail_on: never
-          report_dir: /tmp/zap-authenticated
+          output_dir: /tmp/zap-authenticated
       - zap-scanner-orb/scan:
           target: http://localhost/
           fail_on: never
-          report_dir: /tmp/zap-unauthenticated
+          output_dir: /tmp/zap-unauthenticated
           store_artifacts: false
       - zap-scanner-orb/scan:
           target: http://127.0.0.1/
@@ -240,7 +240,7 @@ jobs:
           auth_header_value: SCAN_TOKEN
           auth_header_site: localhost
           fail_on: never
-          report_dir: /tmp/zap-other-site
+          output_dir: /tmp/zap-other-site
           store_artifacts: false
       - run:
           name: Verify the header was sent only where expected
@@ -315,7 +315,7 @@ jobs:
       - zap-scanner-orb/scan:
           plan: .circleci/zap/custom-plan.yaml
           target: http://localhost/
-          report_dir: /tmp/custom zap reports
+          output_dir: /tmp/custom zap reports
           store_artifacts: false
           max_memory: 768m
       - run:
