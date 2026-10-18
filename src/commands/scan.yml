@@ -29,8 +29,9 @@ parameters:
     default: ""
     description: >
       Path to a custom Automation Framework plan to run instead of a generated one. The plan can reference
-      ${ZAP_TARGET} and ${ZAP_REPORT_DIR}, and must set its own pass/fail criteria, since fail_on, ignore_rules,
-      scan_type, spider_minutes, and active_scan_minutes are ignored. Environment variables are expanded.
+      ${ZAP_TARGET} and ${ZAP_REPORT_DIR}, which are set to target and output_dir, and must set its own pass/fail
+      criteria, since fail_on, ignore_rules, scan_type, spider_minutes, and active_scan_minutes are ignored.
+      Environment variables are expanded.
   fail_on:
     type: enum
     enum: ["high", "medium", "low", "info", "never"]
@@ -74,7 +75,7 @@ parameters:
       Only send the header to sites whose name contains this value. Defaults to $ZAP_AUTH_HEADER_SITE if set,
       otherwise the host of target, so the header is never sent to other hosts the scan reaches. Required for custom
       plans without a target. Environment variables are expanded.
-  wait_for_target:
+  wait_for_target_seconds:
     type: integer
     default: 60
     description: >
@@ -86,22 +87,22 @@ parameters:
     description: >
       Maximum Java heap size for ZAP, such as 512m or 2g. Set explicitly because the JVM otherwise sizes the heap from
       the host's memory rather than the container's limit.
-  report_dir:
+  output_dir:
     type: string
     default: /tmp/zap-reports
     description: >
-      Absolute path of the directory to write reports, the plan, and the ZAP log into. Environment variables are not
-      expanded, since the path is also passed to store_artifacts.
+      Absolute path of the directory to write the reports, the plan, and the ZAP log into. Custom plans see it as
+      $ZAP_REPORT_DIR. Environment variables are not expanded, since the path is also passed to store_artifacts.
   store_artifacts:
     type: boolean
     default: true
-    description: Store report_dir as job artifacts under zap-reports/, including when the scan fails.
-  extra_options:
+    description: Store output_dir as job artifacts under zap-reports/, including when the scan fails.
+  extra_args:
     type: string
     default: ""
     description: >
-      Additional zap.sh command-line options, such as "-config connection.timeoutInSecs=60". Split on whitespace, so
-      individual values cannot contain spaces. Environment variables are expanded.
+      Extra arguments passed to zap.sh before -autorun, such as "-config connection.timeoutInSecs=60". Split on
+      whitespace, so individual arguments cannot contain spaces. Environment variables are expanded.
   no_output_timeout:
     type: string
     default: 30m
@@ -123,14 +124,15 @@ steps:
         PARAM_AUTH_HEADER_VALUE: << parameters.auth_header_value >>
         PARAM_AUTH_HEADER: << parameters.auth_header >>
         PARAM_AUTH_HEADER_SITE: << parameters.auth_header_site >>
-        PARAM_WAIT_FOR_TARGET: << parameters.wait_for_target >>
+        PARAM_WAIT_FOR_TARGET_SECONDS: << parameters.wait_for_target_seconds >>
         PARAM_MAX_MEMORY: << parameters.max_memory >>
-        PARAM_REPORT_DIR: << parameters.report_dir >>
-        PARAM_EXTRA_OPTIONS: << parameters.extra_options >>
+        PARAM_OUTPUT_DIR: << parameters.output_dir >>
+        PARAM_EXTRA_ARGS: << parameters.extra_args >>
       command: << include(scripts/scan.sh) >>
   - when:
       condition: << parameters.store_artifacts >>
       steps:
         - store_artifacts:
-            path: << parameters.report_dir >>
+            path: << parameters.output_dir >>
             destination: zap-reports
+            when: always

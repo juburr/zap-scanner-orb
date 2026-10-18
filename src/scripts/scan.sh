@@ -39,10 +39,10 @@ ACTIVE_SCAN_MINUTES="${PARAM_ACTIVE_SCAN_MINUTES:-10}"
 AUTH_HEADER_VALUE_VAR="${PARAM_AUTH_HEADER_VALUE:-ZAP_AUTH_HEADER_VALUE}"
 AUTH_HEADER=$(expand "${PARAM_AUTH_HEADER:-}")
 AUTH_HEADER_SITE=$(expand "${PARAM_AUTH_HEADER_SITE:-}")
-WAIT_FOR_TARGET="${PARAM_WAIT_FOR_TARGET:-60}"
+WAIT_FOR_TARGET_SECONDS="${PARAM_WAIT_FOR_TARGET_SECONDS:-60}"
 MAX_MEMORY="${PARAM_MAX_MEMORY:-1g}"
-REPORT_DIR=$(trim_slash "${PARAM_REPORT_DIR:-/tmp/zap-reports}")
-EXTRA_OPTIONS=$(expand "${PARAM_EXTRA_OPTIONS:-}")
+OUTPUT_DIR=$(trim_slash "${PARAM_OUTPUT_DIR:-/tmp/zap-reports}")
+EXTRA_ARGS=$(expand "${PARAM_EXTRA_ARGS:-}")
 
 # Print command arguments for debugging purposes.
 echo "Running ZAP scan..."
@@ -53,7 +53,7 @@ else
     echo "  FAIL_ON: ${FAIL_ON}"
 fi
 echo "  TARGET: ${TARGET}"
-echo "  REPORT_DIR: ${REPORT_DIR}"
+echo "  OUTPUT_DIR: ${OUTPUT_DIR}"
 
 # The first ZAP release whose bundled Automation Framework supports every job
 # and report template used by the generated plans.
@@ -108,7 +108,7 @@ if [[ -n "${TARGET}" ]] && [[ ! "${TARGET}" =~ ^https?://[^[:space:]]+$ ]]; then
 fi
 
 for number_param in "spider_minutes:${SPIDER_MINUTES}" "active_scan_minutes:${ACTIVE_SCAN_MINUTES}" \
-    "wait_for_target:${WAIT_FOR_TARGET}"; do
+    "wait_for_target_seconds:${WAIT_FOR_TARGET_SECONDS}"; do
     if [[ ! "${number_param#*:}" =~ ^[0-9]+$ ]]; then
         echo "ERROR: '${number_param%%:*}' must be a non-negative integer, got '${number_param#*:}'."
         exit 1
@@ -120,8 +120,8 @@ if [[ ! "${MAX_MEMORY}" =~ ^[0-9]+[kKmMgG]$ ]]; then
     exit 1
 fi
 
-if [[ "${REPORT_DIR}" != /* ]]; then
-    echo "ERROR: 'report_dir' must be an absolute path, got '${REPORT_DIR}'."
+if [[ "${OUTPUT_DIR}" != /* ]]; then
+    echo "ERROR: 'output_dir' must be an absolute path, got '${OUTPUT_DIR}'."
     exit 1
 fi
 
@@ -274,15 +274,15 @@ target_responds() {
     fi
 }
 
-if [[ -n "${TARGET}" ]] && [[ "${WAIT_FOR_TARGET}" -gt 0 ]]; then
+if [[ -n "${TARGET}" ]] && [[ "${WAIT_FOR_TARGET_SECONDS}" -gt 0 ]]; then
     if ! command -v curl &> /dev/null && ! command -v wget &> /dev/null; then
         echo "WARN: Neither curl nor wget is available, so not waiting for the target."
     else
-        echo "Waiting up to ${WAIT_FOR_TARGET}s for ${TARGET} to respond..."
-        deadline=$((SECONDS + WAIT_FOR_TARGET))
+        echo "Waiting up to ${WAIT_FOR_TARGET_SECONDS}s for ${TARGET} to respond..."
+        deadline=$((SECONDS + WAIT_FOR_TARGET_SECONDS))
         until target_responds; do
             if [[ "${SECONDS}" -ge "${deadline}" ]]; then
-                echo "ERROR: ${TARGET} did not respond within ${WAIT_FOR_TARGET}s."
+                echo "ERROR: ${TARGET} did not respond within ${WAIT_FOR_TARGET_SECONDS}s."
                 exit 1
             fi
             sleep 2
@@ -296,14 +296,15 @@ fi
 
 # Clear this command's outputs from any earlier scan into the same directory,
 # so stale results are never mistaken for this scan's.
-mkdir -p "${REPORT_DIR}"
-rm -f "${REPORT_DIR}"/{report.html,report.json,report.md,plan.yaml,zap.log}
+mkdir -p "${OUTPUT_DIR}"
+rm -f "${OUTPUT_DIR}"/{report.html,report.json,report.md,plan.yaml,zap.log}
 ZAP_HOME=$(mktemp -d)
 trap 'rm -rf "${ZAP_HOME}"' EXIT
 
-# Custom plans can reference these as ${ZAP_TARGET} and ${ZAP_REPORT_DIR}.
+# Custom plans can reference these as ${ZAP_TARGET} and ${ZAP_REPORT_DIR}. The
+# latter keeps its name, which existing plans use, though it holds output_dir.
 export ZAP_TARGET="${TARGET}"
-export ZAP_REPORT_DIR="${REPORT_DIR}"
+export ZAP_REPORT_DIR="${OUTPUT_DIR}"
 
 if [[ -z "${PLAN}" ]]; then
     PLAN="${ZAP_HOME}/plan.yaml"
@@ -357,7 +358,7 @@ if [[ -z "${PLAN}" ]]; then
             echo "  - type: report"
             echo "    parameters:"
             echo "      template: ${report%%:*}"
-            echo "      reportDir: $(yaml_quote "${REPORT_DIR}")"
+            echo "      reportDir: $(yaml_quote "${OUTPUT_DIR}")"
             echo "      reportFile: ${report#*:}"
             # Reports include false positives unless told otherwise, and
             # report.json is what fail_on is checked against.
@@ -366,7 +367,7 @@ if [[ -z "${PLAN}" ]]; then
             fi
         done
     } > "${PLAN}"
-    cp "${PLAN}" "${REPORT_DIR}/plan.yaml"
+    cp "${PLAN}" "${OUTPUT_DIR}/plan.yaml"
     GENERATED_PLAN="true"
 fi
 
@@ -374,9 +375,9 @@ fi
 # Scan
 # ----------------------------------------------------------------------------
 
-# Split extra options on whitespace, without pathname expansion.
-EXTRA_ARGS=()
-read -r -a EXTRA_ARGS <<< "${EXTRA_OPTIONS}"
+# Split extra arguments on whitespace, without pathname expansion.
+EXTRA_ARG_LIST=()
+read -r -a EXTRA_ARG_LIST <<< "${EXTRA_ARGS}"
 
 # An isolated home directory keeps runs independent of any ~/.ZAP config, and
 # an explicit heap size stops the JVM sizing itself from the host's memory
@@ -384,7 +385,7 @@ read -r -a EXTRA_ARGS <<< "${EXTRA_OPTIONS}"
 # such as update checks and telemetry, to its own services. Passive scanning
 # is single-threaded because, with more threads, ZAP 2.17.0 intermittently
 # drops alerts raised concurrently from its alert tree, and so from the reports
-# and the fail_on check. It comes before the extra options so it can be overridden.
+# and the fail_on check. It comes before the extra arguments so it can be overridden.
 #
 # ZAP adds its authentication header from these variables. They are always
 # reset, so values left in the environment can't send a header to sites other
@@ -397,10 +398,10 @@ ZAP_RC=0
         export ZAP_AUTH_HEADER="${AUTH_HEADER}"
         export ZAP_AUTH_HEADER_SITE="${AUTH_HEADER_SITE}"
     fi
-    exec zap.sh -cmd -silent -dir "${ZAP_HOME}/home" "-Xmx${MAX_MEMORY}" -config pscans.threads=1 "${EXTRA_ARGS[@]}" \
+    exec zap.sh -cmd -silent -dir "${ZAP_HOME}/home" "-Xmx${MAX_MEMORY}" -config pscans.threads=1 "${EXTRA_ARG_LIST[@]}" \
         -autorun "${PLAN}"
 ) || ZAP_RC=$?
-cp "${ZAP_HOME}/home/zap.log" "${REPORT_DIR}/zap.log" 2> /dev/null || true
+cp "${ZAP_HOME}/home/zap.log" "${OUTPUT_DIR}/zap.log" 2> /dev/null || true
 
 # ----------------------------------------------------------------------------
 # Results
@@ -408,17 +409,17 @@ cp "${ZAP_HOME}/home/zap.log" "${REPORT_DIR}/zap.log" 2> /dev/null || true
 
 # Counts alert types (not instances) with the given riskcode.
 count_risk() {
-    { grep -oE "\"riskcode\": ?\"$1\"" "${REPORT_DIR}/report.json" || true; } | wc -l | tr -d ' '
+    { grep -oE "\"riskcode\": ?\"$1\"" "${OUTPUT_DIR}/report.json" || true; } | wc -l | tr -d ' '
 }
 
 declare -a ALERT_COUNTS
-if [[ -f "${REPORT_DIR}/report.json" ]]; then
+if [[ -f "${OUTPUT_DIR}/report.json" ]]; then
     for code in 0 1 2 3; do
         ALERT_COUNTS[code]=$(count_risk "${code}")
     done
     echo "Alerts: ${ALERT_COUNTS[3]} high, ${ALERT_COUNTS[2]} medium, ${ALERT_COUNTS[1]} low, ${ALERT_COUNTS[0]} informational."
 fi
-echo "Reports written to ${REPORT_DIR}."
+echo "Reports written to ${OUTPUT_DIR}."
 
 # ZAP exits 1 for plan errors and 2 for plan warnings. Warnings, such as a
 # custom plan's exitStatus warnLevel being reached, don't fail the step.
@@ -428,8 +429,8 @@ if [[ "${ZAP_RC}" != "0" ]] && [[ "${ZAP_RC}" != "2" ]]; then
 fi
 
 if [[ "${GENERATED_PLAN:-false}" == "true" ]]; then
-    if [[ ! -f "${REPORT_DIR}/report.json" ]]; then
-        echo "ERROR: ZAP did not write ${REPORT_DIR}/report.json."
+    if [[ ! -f "${OUTPUT_DIR}/report.json" ]]; then
+        echo "ERROR: ZAP did not write ${OUTPUT_DIR}/report.json."
         exit 1
     fi
     if [[ -n "${FAIL_CODE}" ]]; then

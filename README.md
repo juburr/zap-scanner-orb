@@ -97,6 +97,20 @@ if any passive scan alert is medium risk or higher. The HTML, JSON, and
 Markdown reports are stored as artifacts under `zap-reports/` whether the scan
 passes or fails.
 
+## Upgrading
+
+The next release renames three `scan` parameters. Update your config as follows:
+
+| Old | New |
+|---|---|
+| `scan.report_dir` | `scan.output_dir` |
+| `scan.extra_options` | `scan.extra_args` |
+| `scan.wait_for_target` | `scan.wait_for_target_seconds` |
+
+Custom plans keep using `${ZAP_REPORT_DIR}`, which is set from `output_dir`.
+The reports are now also stored as artifacts when the scan fails, as
+documented; previously the artifact step only ran after a passing scan.
+
 ## Red Hat UBI Images
 
 The orb runs on Red Hat [Universal Base Images](https://catalog.redhat.com/software/base-images)
@@ -261,21 +275,21 @@ step.
 | `auth_header_value` | `ZAP_AUTH_HEADER_VALUE` | Name of the environment variable holding the header value. |
 | `auth_header` | `Authorization` | Header that carries the value. |
 | `auth_header_site` | host of `target` | Only send the header to sites whose name contains this. |
-| `wait_for_target` | `60` | Seconds to wait for `target` to respond before scanning, or `0` to skip. |
+| `wait_for_target_seconds` | `60` | Seconds to wait for `target` to respond before scanning, or `0` to skip. |
 | `max_memory` | `1g` | Maximum Java heap size for ZAP. |
-| `report_dir` | `/tmp/zap-reports` | Absolute directory for the reports, plan, and ZAP log. |
-| `store_artifacts` | `true` | Store `report_dir` as artifacts under `zap-reports/`. |
-| `extra_options` | | Additional `zap.sh` options, split on whitespace. |
+| `output_dir` | `/tmp/zap-reports` | Absolute directory for the reports, plan, and ZAP log. Custom plans see it as `$ZAP_REPORT_DIR`. |
+| `store_artifacts` | `true` | Store `output_dir` as artifacts under `zap-reports/`, including when the scan fails. |
+| `extra_args` | | Extra arguments passed to `zap.sh` before `-autorun`, split on whitespace. |
 | `no_output_timeout` | `30m` | How long the scan may run silently before CircleCI stops it. |
 
 Environment variables are expanded in `target`, `api_definition`, `plan`,
-`auth_header`, `auth_header_site`, and `extra_options`. `report_dir` is passed to `store_artifacts` as is, so it must
+`auth_header`, `auth_header_site`, and `extra_args`. `output_dir` is passed to `store_artifacts` as is, so it must
 be a literal path.
 
-**Results.** `report_dir` receives `report.html`, `report.json`, and
+**Results.** `output_dir` receives `report.html`, `report.json`, and
 `report.md`, along with the generated `plan.yaml` and ZAP's `zap.log`. These
 files are replaced if an earlier scan wrote them, but other files in the
-directory are left alone. Give each scan in a job its own `report_dir` to
+directory are left alone. Give each scan in a job its own `output_dir` to
 keep all of their reports. The step prints the number of alerts at each risk level, and fails if any alert is
 at or above `fail_on`. It also fails if ZAP reports a plan error, such as the
 target refusing connections. Alerts are counted by type, so one missing header
@@ -353,7 +367,7 @@ parameters take precedence over them.
 **Custom plans.** Set `plan` to run your own plan, for example one with
 authentication configured, exported from the ZAP desktop app. The plan can
 reference `${ZAP_TARGET}` and `${ZAP_REPORT_DIR}`, which are set from `target`
-and `report_dir`. `fail_on`, `ignore_rules`, `scan_type`, and the time limits don't apply to
+and `output_dir`. `fail_on`, `ignore_rules`, `scan_type`, and the time limits don't apply to
 custom plans, so end the plan with an `exitStatus` job (ZAP 2.16.0 or newer)
 to fail on alerts. The step fails when ZAP exits with a plan error (exit code
 1), and passes with a warning on plan warnings (exit code 2).
@@ -376,7 +390,7 @@ killed on smaller resource classes.
 | `No checksum available for version ... and strict mode is enabled` | Upgrade the orb once it pins the release, or temporarily set `verify_checksums: known_versions` to install it unverified. |
 | `... already exists and is not empty` | Choose a different `install_path`, or remove the directory first. |
 | `zap.sh was not found on the PATH` | Run `install` earlier in the same job as `scan`. |
-| `... did not respond within ...s` | Check that the application started and listens on the `target` host and port, or raise `wait_for_target`. |
+| `... did not respond within ...s` | Check that the application started and listens on the `target` host and port, or raise `wait_for_target_seconds`. |
 | `auth_header_value names $... which is unset or empty` | Attach the context that defines the variable to the job, or check its name. |
 | Authenticated pages are missing from the reports | Check that `auth_header_site` matches the host in `target`, and that the token hasn't expired. |
 | `alert type(s) at or above fail_on` | Review `report.html` in the job's artifacts, then fix the findings, add false positives to `ignore_rules`, or raise `fail_on`. |

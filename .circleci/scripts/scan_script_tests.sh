@@ -145,10 +145,10 @@ run_scan() {
         PARAM_AUTH_HEADER_VALUE="ZAP_AUTH_HEADER_VALUE" \
         PARAM_AUTH_HEADER="" \
         PARAM_AUTH_HEADER_SITE="" \
-        PARAM_WAIT_FOR_TARGET="0" \
+        PARAM_WAIT_FOR_TARGET_SECONDS="0" \
         PARAM_MAX_MEMORY="1g" \
-        PARAM_REPORT_DIR="${REPORTS}" \
-        PARAM_EXTRA_OPTIONS="" \
+        PARAM_OUTPUT_DIR="${REPORTS}" \
+        PARAM_EXTRA_ARGS="" \
         "$@" \
         bash "${SCRIPT}" 2>&1)
     RC=$?
@@ -202,11 +202,11 @@ expect_rejected "a fractional spider_minutes" "'spider_minutes' must be a non-ne
     PARAM_SPIDER_MINUTES="1.5"
 expect_rejected "a negative active_scan_minutes" "'active_scan_minutes' must be a non-negative integer, got '-1'" \
     PARAM_ACTIVE_SCAN_MINUTES="-1"
-expect_rejected "a non-numeric wait_for_target" "'wait_for_target' must be a non-negative integer, got 'soon'" \
-    PARAM_WAIT_FOR_TARGET="soon"
+expect_rejected "a non-numeric wait_for_target_seconds" \
+    "'wait_for_target_seconds' must be a non-negative integer, got 'soon'" PARAM_WAIT_FOR_TARGET_SECONDS="soon"
 expect_rejected "a malformed max_memory" "Invalid max_memory '1gb'" PARAM_MAX_MEMORY="1gb"
-expect_rejected "a relative report_dir" "'report_dir' must be an absolute path, got 'reports'" \
-    PARAM_REPORT_DIR="reports"
+expect_rejected "a relative output_dir" "'output_dir' must be an absolute path, got 'reports'" \
+    PARAM_OUTPUT_DIR="reports"
 expect_rejected "ZAP older than 2.12.0" "Scanning requires ZAP 2.12.0 or newer, but ZAP 2.11.1 is installed" \
     ZAP_VERSION="2.11.1"
 expect_rejected "an old ZAP detected with zap.sh -version" \
@@ -243,7 +243,7 @@ check "does not import an API" file_lacks "${FAKE_STATE}/plan" "openapi"
 check "writes an HTML report" file_has "${FAKE_STATE}/plan" "template: traditional-html"
 check "writes a JSON report" file_has "${FAKE_STATE}/plan" "template: traditional-json"
 check "writes a Markdown report" file_has "${FAKE_STATE}/plan" "template: traditional-md"
-check "reports into report_dir" file_has "${FAKE_STATE}/plan" "reportDir: '${REPORTS}'"
+check "reports into output_dir" file_has "${FAKE_STATE}/plan" "reportDir: '${REPORTS}'"
 check "has no exitStatus job, which older ZAP releases reject" file_lacks "${FAKE_STATE}/plan" "exitStatus"
 check "plan saved beside the reports" diff -q "${FAKE_STATE}/plan" "${REPORTS}/plan.yaml"
 check "ZAP log saved beside the reports" file_has "${REPORTS}/zap.log" "fake zap log"
@@ -358,9 +358,9 @@ check "exit code is zero" rc_is_zero
 check "target is a single-quoted scalar" file_has "${FAKE_STATE}/plan" "- 'http://127.0.0.1:9/?q=''x''#:{y}'"
 end
 
-begin "report_dir with spaces and a trailing slash"
+begin "output_dir with spaces and a trailing slash"
 spaced="${WORK}/with space/reports"
-run_scan FAKE_REPORT="${WORK}/report-none.json" PARAM_REPORT_DIR="${spaced}/"
+run_scan FAKE_REPORT="${WORK}/report-none.json" PARAM_OUTPUT_DIR="${spaced}/"
 check "exit code is zero" rc_is_zero
 check "created the directory" test -d "${spaced}"
 check "trailing slash trimmed" file_has "${spaced}/plan.yaml" "reportDir: '${spaced}'"
@@ -381,13 +381,13 @@ end
 # zap.sh invocation
 # ---------------------------------------------------------------------------
 
-begin "passes isolation, memory, and extra options to zap.sh"
-# Files that the options would match if they were subject to pathname expansion.
+begin "passes isolation, memory, and extra arguments to zap.sh"
+# Files that the arguments would match if they were subject to pathname expansion.
 mkdir -p "${WORK}/globs"
 touch "${WORK}/globs/a.b=glob" "${WORK}/globs/c.d=x"
 cd "${WORK}/globs" || exit 1
 run_scan FAKE_REPORT="${WORK}/report-none.json" PARAM_MAX_MEMORY="512m" \
-    PARAM_EXTRA_OPTIONS="-config  a.b=* -config c.d=[x]"
+    PARAM_EXTRA_ARGS="-config  a.b=* -config c.d=[x]"
 cd - > /dev/null || exit 1
 check "exit code is zero" rc_is_zero
 zap_dir=$(sed -n '4p' "${FAKE_STATE}/args" 2> /dev/null)
@@ -404,12 +404,12 @@ check "exit code is zero" rc_is_zero
 check "passed -Xmx1g" grep -qx -- "-Xmx1g" "${FAKE_STATE}/args"
 end
 
-begin "expands environment variables in extra_options"
+begin "expands environment variables in extra_args"
 if command -v circleci &> /dev/null; then
     run_scan FAKE_REPORT="${WORK}/report-none.json" SCAN_TEST_TIMEOUT="45" \
-        PARAM_EXTRA_OPTIONS='-config connection.timeoutInSecs=${SCAN_TEST_TIMEOUT}'
+        PARAM_EXTRA_ARGS='-config connection.timeoutInSecs=${SCAN_TEST_TIMEOUT}'
     check "exit code is zero" rc_is_zero
-    check "passed the expanded option" grep -qx -- "connection.timeoutInSecs=45" "${FAKE_STATE}/args"
+    check "passed the expanded argument" grep -qx -- "connection.timeoutInSecs=45" "${FAKE_STATE}/args"
 else
     echo "    skipped: the CircleCI CLI is not available"
 fi
@@ -609,7 +609,7 @@ stale="${WORK}/stale-reports"
 mkdir -p "${stale}"
 cp "${WORK}/report-none.json" "${stale}/report.json"
 echo "keep me" > "${stale}/notes.txt"
-run_scan PARAM_REPORT_DIR="${stale}"
+run_scan PARAM_OUTPUT_DIR="${stale}"
 check "exit code is non-zero" rc_is_nonzero
 check "did not use the stale report" output_has "ZAP did not write ${stale}/report.json."
 check "left unrelated files alone" file_has "${stale}/notes.txt" "keep me"
@@ -645,7 +645,7 @@ check "printed no ignored rules" output_lacks "IGNORE_RULES:"
 end
 
 begin "custom plan without a target or report"
-run_scan PARAM_PLAN="${FIXTURES}/custom-plan.yaml" PARAM_TARGET="" PARAM_WAIT_FOR_TARGET="60"
+run_scan PARAM_PLAN="${FIXTURES}/custom-plan.yaml" PARAM_TARGET="" PARAM_WAIT_FOR_TARGET_SECONDS="60"
 check "exit code is zero" rc_is_zero
 check "did not wait for a target" output_lacks "Waiting up to"
 end
@@ -662,7 +662,7 @@ end
 
 begin "gives up on a target that never responds"
 start=${SECONDS}
-run_scan PARAM_WAIT_FOR_TARGET="3"
+run_scan PARAM_WAIT_FOR_TARGET_SECONDS="3"
 check "exit code is non-zero" rc_is_nonzero
 check "explained the failure" output_has "${DEAD_TARGET} did not respond within 3s."
 check "gave up promptly" test $((SECONDS - start)) -le 10
@@ -689,7 +689,7 @@ EOF
         [[ -s "${tls}/port" ]] && break
         sleep 0.1
     done
-    run_scan PARAM_TARGET="https://127.0.0.1:$(cat "${tls}/port")/" PARAM_WAIT_FOR_TARGET="5" \
+    run_scan PARAM_TARGET="https://127.0.0.1:$(cat "${tls}/port")/" PARAM_WAIT_FOR_TARGET_SECONDS="5" \
         FAKE_REPORT="${WORK}/report-none.json"
     kill "${tls_pid}" 2> /dev/null
     check "exit code is zero" rc_is_zero
@@ -699,21 +699,21 @@ else
 fi
 end
 
-begin "does not wait when wait_for_target is 0"
-run_scan PARAM_WAIT_FOR_TARGET="0" FAKE_REPORT="${WORK}/report-none.json"
+begin "does not wait when wait_for_target_seconds is 0"
+run_scan PARAM_WAIT_FOR_TARGET_SECONDS="0" FAKE_REPORT="${WORK}/report-none.json"
 check "exit code is zero" rc_is_zero
 check "did not wait" output_lacks "Waiting up to"
 end
 
 if [[ -n "${SCAN_TARGET:-}" ]]; then
     begin "waits for a responding target"
-    run_scan PARAM_TARGET="${SCAN_TARGET}" PARAM_WAIT_FOR_TARGET="10" FAKE_REPORT="${WORK}/report-none.json"
+    run_scan PARAM_TARGET="${SCAN_TARGET}" PARAM_WAIT_FOR_TARGET_SECONDS="10" FAKE_REPORT="${WORK}/report-none.json"
     check "exit code is zero" rc_is_zero
     check "waited" output_has "Waiting up to 10s for ${SCAN_TARGET} to respond..."
     end
 
     begin "treats an HTTP error status as a response"
-    run_scan PARAM_TARGET="${SCAN_TARGET%/}/no-such-page" PARAM_WAIT_FOR_TARGET="10" \
+    run_scan PARAM_TARGET="${SCAN_TARGET%/}/no-such-page" PARAM_WAIT_FOR_TARGET_SECONDS="10" \
         FAKE_REPORT="${WORK}/report-none.json"
     check "exit code is zero" rc_is_zero
     check "did not time out" output_lacks "did not respond"
@@ -730,7 +730,7 @@ run_real_scan() {
     rm -rf "${WORK:?}/home"
     mkdir -p "${WORK}/home"
     run_scan PATH="${PATH}" HOME="${WORK}/home" ZAP_VERSION="" PARAM_TARGET="${SCAN_TARGET}" \
-        PARAM_WAIT_FOR_TARGET="30" "$@"
+        PARAM_WAIT_FOR_TARGET_SECONDS="30" "$@"
 }
 
 if [[ -z "${SCAN_TARGET:-}" ]] || ! command -v zap.sh &> /dev/null; then
@@ -826,7 +826,7 @@ EOF
     end
 
     begin "real scan of an unreachable target"
-    run_real_scan PARAM_TARGET="${DEAD_TARGET}" PARAM_WAIT_FOR_TARGET="0"
+    run_real_scan PARAM_TARGET="${DEAD_TARGET}" PARAM_WAIT_FOR_TARGET_SECONDS="0"
     check "exit code is non-zero" rc_is_nonzero
     check "reported the ZAP failure" output_has "ZAP scan failed (exit code 1)"
     end
