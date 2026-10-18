@@ -420,6 +420,22 @@ check "exit code is zero" rc_is_zero
 check "passed -Xmx1g" grep -qx -- "-Xmx1g" "${FAKE_STATE}/args"
 end
 
+# With no ignore_rules and no extra_args, the rule and argument arrays are
+# empty. This matters on bash older than 4.4: under set -u it treats an empty
+# array as unset, so "${arr[@]}" stops the scan with "unbound variable". The
+# script expands them as ${arr[@]+"${arr[@]}"}. On any bash, this checks that
+# the empty arrays add no argument to zap.sh and no alert filter to the plan.
+begin "scans with no ignore_rules or extra_args"
+run_scan FAKE_REPORT="${WORK}/report-none.json" PARAM_IGNORE_RULES="" PARAM_EXTRA_ARGS=""
+check "exit code is zero" rc_is_zero
+check "did not stop on an empty array" output_lacks "unbound variable"
+zap_dir=$(sed -n '4p' "${FAKE_STATE}/args" 2> /dev/null)
+plan_path=$(tail -n 1 "${FAKE_STATE}/args" 2> /dev/null)
+check "passes only the standard arguments" args_are -cmd -silent -dir "${zap_dir}" -Xmx1g \
+    -config pscans.threads=1 -autorun "${plan_path}"
+check "has no alertFilter job" file_lacks "${FAKE_STATE}/plan" "alertFilter"
+end
+
 begin "expands environment variables in extra_args"
 if command -v circleci &> /dev/null; then
     run_scan FAKE_REPORT="${WORK}/report-none.json" SCAN_TEST_TIMEOUT="45" \

@@ -172,13 +172,13 @@ fi
 # job only takes integer rule IDs.
 IGNORED_RULES=()
 read -r -a ignore_entries <<< "${IGNORE_RULES//,/ }"
-for rule in "${ignore_entries[@]}"; do
+for rule in ${ignore_entries[@]+"${ignore_entries[@]}"}; do
     if [[ ! "${rule}" =~ ^[0-9]{1,9}$ ]]; then
         echo "ERROR: Invalid rule '${rule}' in ignore_rules. Expected a ZAP scan rule ID such as 10020." >&2
         exit 1
     fi
     rule=$((10#${rule}))
-    if [[ " ${IGNORED_RULES[*]} " != *" ${rule} "* ]]; then
+    if [[ " ${IGNORED_RULES[*]:-} " != *" ${rule} "* ]]; then
         IGNORED_RULES+=("${rule}")
     fi
 done
@@ -403,7 +403,7 @@ ZAP_RC=0
         export ZAP_AUTH_HEADER="${AUTH_HEADER}"
         export ZAP_AUTH_HEADER_SITE="${AUTH_HEADER_SITE}"
     fi
-    exec zap.sh -cmd -silent -dir "${ZAP_HOME}/home" "-Xmx${MAX_MEMORY}" -config pscans.threads=1 "${EXTRA_ARG_LIST[@]}" \
+    exec zap.sh -cmd -silent -dir "${ZAP_HOME}/home" "-Xmx${MAX_MEMORY}" -config pscans.threads=1 ${EXTRA_ARG_LIST[@]+"${EXTRA_ARG_LIST[@]}"} \
         -autorun "${PLAN}"
 ) || ZAP_RC=$?
 cp "${ZAP_HOME}/home/zap.log" "${OUTPUT_DIR}/zap.log" 2> /dev/null || true
