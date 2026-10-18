@@ -110,6 +110,8 @@ The next release renames three `scan` parameters. Update your config as follows:
 Custom plans keep using `${ZAP_REPORT_DIR}`, which is set from `output_dir`.
 The reports are now also stored as artifacts when the scan fails, as
 documented; previously the artifact step only ran after a passing scan.
+The scan's `ERROR:` and `WARN:` messages now go to stderr, so a step that
+captures its stdout and searches it for them must capture stderr too (`2>&1`).
 
 ## Red Hat UBI Images
 

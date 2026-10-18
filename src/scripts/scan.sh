@@ -1,6 +1,8 @@
 #!/bin/bash
 
-set -eo pipefail
+set -euo pipefail
+# A job can turn on xtrace (SHELLOPTS, or set -x in $BASH_ENV), which would print the auth header value.
+set +o xtrace
 
 # Expands environment variables (e.g. $HOME) in parameter values. Falls back to
 # the literal value on images that don't ship the CircleCI CLI.
@@ -103,65 +105,65 @@ url_host() {
 # ----------------------------------------------------------------------------
 
 if [[ -n "${TARGET}" ]] && [[ ! "${TARGET}" =~ ^https?://[^[:space:]]+$ ]]; then
-    echo "ERROR: Invalid target '${TARGET}'. Expected an http:// or https:// URL."
+    echo "ERROR: Invalid target '${TARGET}'. Expected an http:// or https:// URL." >&2
     exit 1
 fi
 
 for number_param in "spider_minutes:${SPIDER_MINUTES}" "active_scan_minutes:${ACTIVE_SCAN_MINUTES}" \
     "wait_for_target_seconds:${WAIT_FOR_TARGET_SECONDS}"; do
     if [[ ! "${number_param#*:}" =~ ^[0-9]+$ ]]; then
-        echo "ERROR: '${number_param%%:*}' must be a non-negative integer, got '${number_param#*:}'."
+        echo "ERROR: '${number_param%%:*}' must be a non-negative integer, got '${number_param#*:}'." >&2
         exit 1
     fi
 done
 
 if [[ ! "${MAX_MEMORY}" =~ ^[0-9]+[kKmMgG]$ ]]; then
-    echo "ERROR: Invalid max_memory '${MAX_MEMORY}'. Expected a Java heap size such as 1g or 512m."
+    echo "ERROR: Invalid max_memory '${MAX_MEMORY}'. Expected a Java heap size such as 1g or 512m." >&2
     exit 1
 fi
 
 if [[ "${OUTPUT_DIR}" != /* ]]; then
-    echo "ERROR: 'output_dir' must be an absolute path, got '${OUTPUT_DIR}'."
+    echo "ERROR: 'output_dir' must be an absolute path, got '${OUTPUT_DIR}'." >&2
     exit 1
 fi
 
 if [[ -n "${PLAN}" ]]; then
     if [[ ! -f "${PLAN}" ]]; then
-        echo "ERROR: Automation Framework plan '${PLAN}' does not exist."
+        echo "ERROR: Automation Framework plan '${PLAN}' does not exist." >&2
         exit 1
     fi
     # zap.sh changes into its install directory, so the plan path must be absolute.
     PLAN=$(cd "$(dirname "${PLAN}")" && pwd)/$(basename "${PLAN}")
 else
     if [[ -z "${TARGET}" ]]; then
-        echo "ERROR: 'target' is required unless a custom 'plan' is provided."
+        echo "ERROR: 'target' is required unless a custom 'plan' is provided." >&2
         exit 1
     fi
     case "${SCAN_TYPE}" in
         baseline | full | api) ;;
         *)
-            echo "ERROR: Invalid scan_type '${SCAN_TYPE}'. Expected baseline, full, or api."
+            echo "ERROR: Invalid scan_type '${SCAN_TYPE}'. Expected baseline, full, or api." >&2
             exit 1
             ;;
     esac
     if ! FAIL_CODE=$(risk_code "${FAIL_ON}"); then
-        echo "ERROR: Invalid fail_on '${FAIL_ON}'. Expected high, medium, low, info, or never."
+        echo "ERROR: Invalid fail_on '${FAIL_ON}'. Expected high, medium, low, info, or never." >&2
         exit 1
     fi
     if [[ "${SCAN_TYPE}" == "api" ]]; then
         if [[ -z "${API_DEFINITION}" ]]; then
-            echo "ERROR: 'api_definition' is required when scan_type is api."
+            echo "ERROR: 'api_definition' is required when scan_type is api." >&2
             exit 1
         fi
         if [[ ! "${API_DEFINITION}" =~ ^https?:// ]]; then
             if [[ ! -f "${API_DEFINITION}" ]]; then
-                echo "ERROR: API definition '${API_DEFINITION}' does not exist."
+                echo "ERROR: API definition '${API_DEFINITION}' does not exist." >&2
                 exit 1
             fi
             API_DEFINITION=$(cd "$(dirname "${API_DEFINITION}")" && pwd)/$(basename "${API_DEFINITION}")
         fi
     elif [[ -n "${API_DEFINITION}" ]]; then
-        echo "WARN: 'api_definition' is ignored unless scan_type is api."
+        echo "WARN: 'api_definition' is ignored unless scan_type is api." >&2
     fi
 fi
 
@@ -172,7 +174,7 @@ IGNORED_RULES=()
 read -r -a ignore_entries <<< "${IGNORE_RULES//,/ }"
 for rule in "${ignore_entries[@]}"; do
     if [[ ! "${rule}" =~ ^[0-9]{1,9}$ ]]; then
-        echo "ERROR: Invalid rule '${rule}' in ignore_rules. Expected a ZAP scan rule ID such as 10020."
+        echo "ERROR: Invalid rule '${rule}' in ignore_rules. Expected a ZAP scan rule ID such as 10020." >&2
         exit 1
     fi
     rule=$((10#${rule}))
@@ -182,7 +184,7 @@ for rule in "${ignore_entries[@]}"; do
 done
 if [[ "${#IGNORED_RULES[@]}" -gt 0 ]]; then
     if [[ -n "${PLAN}" ]]; then
-        echo "WARN: 'ignore_rules' is ignored when a custom plan is provided. Add an alertFilter job to the plan instead."
+        echo "WARN: 'ignore_rules' is ignored when a custom plan is provided. Add an alertFilter job to the plan instead." >&2
         IGNORED_RULES=()
     else
         echo "  IGNORE_RULES: ${IGNORED_RULES[*]}"
@@ -193,29 +195,29 @@ fi
 # never printed, and handed to ZAP through its environment rather than the
 # plan or the command line.
 if [[ ! "${AUTH_HEADER_VALUE_VAR}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
-    echo "ERROR: Invalid auth_header_value '${AUTH_HEADER_VALUE_VAR}'. Expected the name of an environment variable."
+    echo "ERROR: Invalid auth_header_value '${AUTH_HEADER_VALUE_VAR}'. Expected the name of an environment variable." >&2
     exit 1
 fi
 AUTH_HEADER_VALUE="${!AUTH_HEADER_VALUE_VAR:-}"
 if [[ -z "${AUTH_HEADER_VALUE}" ]]; then
     if [[ "${AUTH_HEADER_VALUE_VAR}" != "ZAP_AUTH_HEADER_VALUE" ]]; then
-        echo "ERROR: auth_header_value names \$${AUTH_HEADER_VALUE_VAR}, which is unset or empty."
-        echo "ERROR: Check that the context or project environment variable holding it is available to this job."
+        echo "ERROR: auth_header_value names \$${AUTH_HEADER_VALUE_VAR}, which is unset or empty." >&2
+        echo "ERROR: Check that the context or project environment variable holding it is available to this job." >&2
         exit 1
     fi
     if [[ -n "${AUTH_HEADER}" ]] || [[ -n "${AUTH_HEADER_SITE}" ]]; then
-        echo "WARN: 'auth_header' and 'auth_header_site' are ignored because \$${AUTH_HEADER_VALUE_VAR} is empty."
+        echo "WARN: 'auth_header' and 'auth_header_site' are ignored because \$${AUTH_HEADER_VALUE_VAR} is empty." >&2
     fi
 else
     AUTH_HEADER="${AUTH_HEADER:-${ZAP_AUTH_HEADER:-Authorization}}"
     # RFC 9110 token characters.
     header_name_re="^[-!#\$%&'*+.^_\`|~0-9A-Za-z]+\$"
     if [[ ! "${AUTH_HEADER}" =~ ${header_name_re} ]]; then
-        echo "ERROR: Invalid auth_header '${AUTH_HEADER}'. Expected an HTTP header name such as Authorization."
+        echo "ERROR: Invalid auth_header '${AUTH_HEADER}'. Expected an HTTP header name such as Authorization." >&2
         exit 1
     fi
     if [[ "${AUTH_HEADER_VALUE}" == *$'\n'* ]] || [[ "${AUTH_HEADER_VALUE}" == *$'\r'* ]]; then
-        echo "ERROR: \$${AUTH_HEADER_VALUE_VAR} contains a line break, which is not allowed in a header value."
+        echo "ERROR: \$${AUTH_HEADER_VALUE_VAR} contains a line break, which is not allowed in a header value." >&2
         exit 1
     fi
     AUTH_HEADER_SITE="${AUTH_HEADER_SITE:-${ZAP_AUTH_HEADER_SITE:-}}"
@@ -225,11 +227,11 @@ else
     # ZAP sends the header everywhere when no site is set, which could leak it
     # to any other host a custom plan reaches.
     if [[ -z "${AUTH_HEADER_SITE}" ]]; then
-        echo "ERROR: 'auth_header_site' is required when a custom plan is run without a 'target'."
+        echo "ERROR: 'auth_header_site' is required when a custom plan is run without a 'target'." >&2
         exit 1
     fi
     if [[ "${AUTH_HEADER_SITE}" =~ [[:space:]] ]]; then
-        echo "ERROR: Invalid auth_header_site '${AUTH_HEADER_SITE}'. Expected a host name such as api.example.com."
+        echo "ERROR: Invalid auth_header_site '${AUTH_HEADER_SITE}'. Expected a host name such as api.example.com." >&2
         exit 1
     fi
     echo "  AUTH_HEADER: ${AUTH_HEADER} (value from \$${AUTH_HEADER_VALUE_VAR})"
@@ -241,7 +243,7 @@ fi
 # ----------------------------------------------------------------------------
 
 if ! command -v zap.sh &> /dev/null; then
-    echo "ERROR: zap.sh was not found on the PATH. Run the install command before scanning."
+    echo "ERROR: zap.sh was not found on the PATH. Run the install command before scanning." >&2
     exit 1
 fi
 
@@ -250,7 +252,7 @@ if [[ -z "${ZAP_VERSION}" ]]; then
     ZAP_VERSION=$(zap.sh -cmd -version 2> /dev/null | tail -n 1 || true)
 fi
 if [[ "${ZAP_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && version_lt "${ZAP_VERSION}" "${MIN_ZAP_VERSION}"; then
-    echo "ERROR: Scanning requires ZAP ${MIN_ZAP_VERSION} or newer, but ZAP ${ZAP_VERSION} is installed."
+    echo "ERROR: Scanning requires ZAP ${MIN_ZAP_VERSION} or newer, but ZAP ${ZAP_VERSION} is installed." >&2
     exit 1
 fi
 
@@ -260,7 +262,10 @@ fi
 
 # Any HTTP response counts, since the root of an API often returns 404. This
 # only checks reachability, so certificates aren't verified: ZAP accepts the
-# self-signed certificates that applications under test commonly use.
+# self-signed certificates that applications under test commonly use. The probe
+# is exempt from the --fail and --proto '=https' rule for curl: it sends no
+# credentials (never the auth header), its response is discarded rather than
+# trusted, and the target may be plain http.
 target_responds() {
     if command -v curl &> /dev/null; then
         curl -sS -k -o /dev/null --max-time 5 "${TARGET}" 2> /dev/null
@@ -276,13 +281,13 @@ target_responds() {
 
 if [[ -n "${TARGET}" ]] && [[ "${WAIT_FOR_TARGET_SECONDS}" -gt 0 ]]; then
     if ! command -v curl &> /dev/null && ! command -v wget &> /dev/null; then
-        echo "WARN: Neither curl nor wget is available, so not waiting for the target."
+        echo "WARN: Neither curl nor wget is available, so not waiting for the target." >&2
     else
         echo "Waiting up to ${WAIT_FOR_TARGET_SECONDS}s for ${TARGET} to respond..."
         deadline=$((SECONDS + WAIT_FOR_TARGET_SECONDS))
         until target_responds; do
             if [[ "${SECONDS}" -ge "${deadline}" ]]; then
-                echo "ERROR: ${TARGET} did not respond within ${WAIT_FOR_TARGET_SECONDS}s."
+                echo "ERROR: ${TARGET} did not respond within ${WAIT_FOR_TARGET_SECONDS}s." >&2
                 exit 1
             fi
             sleep 2
@@ -424,13 +429,13 @@ echo "Reports written to ${OUTPUT_DIR}."
 # ZAP exits 1 for plan errors and 2 for plan warnings. Warnings, such as a
 # custom plan's exitStatus warnLevel being reached, don't fail the step.
 if [[ "${ZAP_RC}" != "0" ]] && [[ "${ZAP_RC}" != "2" ]]; then
-    echo "ERROR: ZAP scan failed (exit code ${ZAP_RC}). See the plan errors above."
+    echo "ERROR: ZAP scan failed (exit code ${ZAP_RC}). See the plan errors above." >&2
     exit 1
 fi
 
 if [[ "${GENERATED_PLAN:-false}" == "true" ]]; then
     if [[ ! -f "${OUTPUT_DIR}/report.json" ]]; then
-        echo "ERROR: ZAP did not write ${OUTPUT_DIR}/report.json."
+        echo "ERROR: ZAP did not write ${OUTPUT_DIR}/report.json." >&2
         exit 1
     fi
     if [[ -n "${FAIL_CODE}" ]]; then
@@ -439,14 +444,14 @@ if [[ "${GENERATED_PLAN:-false}" == "true" ]]; then
             failing=$((failing + ALERT_COUNTS[code]))
         done
         if [[ "${failing}" -gt 0 ]]; then
-            echo "ERROR: ${failing} alert type(s) at or above fail_on '${FAIL_ON}'. See the reports for details."
+            echo "ERROR: ${failing} alert type(s) at or above fail_on '${FAIL_ON}'. See the reports for details." >&2
             exit 1
         fi
     fi
 fi
 
 if [[ "${ZAP_RC}" == "2" ]]; then
-    echo "WARN: ZAP scan passed with plan warnings. See the output above."
+    echo "WARN: ZAP scan passed with plan warnings. See the output above." >&2
 else
     echo "ZAP scan passed."
 fi
