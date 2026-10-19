@@ -108,7 +108,7 @@ Start your app as a service container, install ZAP, scan. Copy this into `.circl
 version: 2.1
 
 orbs:
-  zap: juburr/zap-scanner-orb@0
+  zap: juburr/zap-scanner-orb@1.0.0
 
 jobs:
   dast:
@@ -133,7 +133,7 @@ workflows:
 Swap in your own app image and port, push, and the scan waits for the application to respond, spiders it, and fails the job if any passive scan alert is medium risk or higher. The HTML, JSON and Markdown reports are stored under `zap-reports/` in the job's **Artifacts** tab whether the scan passes or fails. Any Linux executor with Java and the tools listed under [Supported Platforms](#-supported-platforms) works; see [ZAP and Java Versions](#-zap-and-java-versions) for the Java each ZAP release needs, and [Red Hat UBI Images](#-red-hat-ubi-images) for images that don't include Java.
 
 > [!TIP]
-> Upgrading from `report_dir`, `extra_options` or `wait_for_target`? The next release renames them. See [Upgrading](#-upgrading).
+> Upgrading from `report_dir`, `extra_options` or `wait_for_target`? v1.0.0 renames them. See [Upgrading](#-upgrading).
 
 > [!NOTE]
 > Findings fail the job: `fail_on` defaults to `medium`. Set `fail_on: never` to only report alerts while you work through them, or [ignore false positives](#ignore-false-positives) by rule ID.
@@ -449,7 +449,7 @@ Environment variables are expanded in `target`, `api_definition`, `plan`, `auth_
 
 ## 📦 Upgrading
 
-The next release renames three `scan` parameters. Update your config as follows:
+v1.0.0 renames three `scan` parameters. Update your config as follows:
 
 | Old | New |
 | --- | --- |
@@ -505,7 +505,7 @@ Every supported version has a pinned SHA-512 checksum. Each one was derived from
 If you pin a ZAP release newer than this orb, `strict` fails until the orb is upgraded to pin it. Upgrade the orb (or open a PR adding the checksum, generated with `src/scripts/install_hash.sh`) rather than opting out. `known_versions` and `false` remain available for cases where you accept running an unverified release.
 
 > [!WARNING]
-> **Changed in the next release:** the default was previously `known_versions`, which installed unlisted versions without verification. Pipelines that pin a ZAP version newer than the orb's table now fail until they upgrade the orb or set `verify_checksums: known_versions` explicitly.
+> **Changed in v1.0.0:** the default was previously `known_versions`, which installed unlisted versions without verification. Pipelines that pin a ZAP version newer than the orb's table now fail until they upgrade the orb or set `verify_checksums: known_versions` explicitly.
 
 ## 🌐 Network Access
 
