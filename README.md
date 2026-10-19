@@ -476,7 +476,7 @@ Linux executors, Docker or machine. ZAP's Linux release is one Java archive for 
 The executor needs:
 - A Java runtime compatible with the ZAP version. See [ZAP and Java Versions](#-zap-and-java-versions).
 - bash 4 or newer. Images with only `/bin/sh`, and macOS's bash 3, are refused with a clear error.
-- `tar`, `gzip`, `sha512sum` (only when verifying), and either `curl` or `wget`. `cimg/openjdk` has them all; on UBI images, see [Red Hat UBI Images](#-red-hat-ubi-images).
+- `mktemp`, `tar`, `gzip`, `sha512sum` (only when verifying), and either `curl` or `wget`. `cimg/openjdk` has them all; on UBI images, see [Red Hat UBI Images](#-red-hat-ubi-images).
 
 Images that run as root without `/home/circleci`, such as `eclipse-temurin`, work too: the default paths follow `$HOME`. Without the CircleCI CLI on the image, parameter values are used as written, without environment variable expansion.
 
