@@ -130,7 +130,7 @@ workflows:
       - dast
 ```
 
-Swap in your own app image and port, push, and the scan waits for the application to respond, spiders it, and fails the job if any passive scan alert is medium risk or higher. The HTML, JSON and Markdown reports are stored under `zap-reports/` in the job's **Artifacts** tab whether the scan passes or fails. Any Linux executor with Java works; see [ZAP and Java Versions](#-zap-and-java-versions) for the Java each ZAP release needs, and [Red Hat UBI Images](#-red-hat-ubi-images) for images that don't include Java.
+Swap in your own app image and port, push, and the scan waits for the application to respond, spiders it, and fails the job if any passive scan alert is medium risk or higher. The HTML, JSON and Markdown reports are stored under `zap-reports/` in the job's **Artifacts** tab whether the scan passes or fails. Any Linux executor with Java and the tools listed under [Supported Platforms](#-supported-platforms) works; see [ZAP and Java Versions](#-zap-and-java-versions) for the Java each ZAP release needs, and [Red Hat UBI Images](#-red-hat-ubi-images) for images that don't include Java.
 
 > [!TIP]
 > Upgrading from `report_dir`, `extra_options` or `wait_for_target`? The next release renames them. See [Upgrading](#-upgrading).
@@ -288,7 +288,7 @@ The step fails when ZAP exits with a plan error (exit code 1), and passes with a
 
 ### Machine Executors and `JAVA_HOME`
 
-From ZAP 2.17.0 onward, both `install` and `zap.sh` honor `JAVA_HOME`, so Java doesn't have to be on the `PATH`, for example on a machine executor with a JDK provisioned by an earlier step:
+From ZAP 2.17.0 onward, both `install` and `zap.sh` honor `JAVA_HOME`, so Java doesn't have to be on the `PATH`, for example on a machine executor where an earlier step downloads a Java runtime, as CI does with Eclipse Temurin (which needs access to `api.adoptium.net` and GitHub):
 
 ```yaml
 jobs:
@@ -298,8 +298,16 @@ jobs:
     steps:
       - checkout
       - run:
-          name: Point JAVA_HOME at a Java 17+ runtime
-          command: echo 'export JAVA_HOME=/opt/java/jdk-21' >> "$BASH_ENV"
+          name: Download a Temurin 21 JRE into JAVA_HOME
+          command: |
+            case "$(uname -m)" in
+              x86_64) arch=x64 ;;
+              aarch64) arch=aarch64 ;;
+            esac
+            mkdir -p "$HOME/temurin21"
+            curl -fsSL --retry 5 "https://api.adoptium.net/v3/binary/latest/21/ga/linux/${arch}/jre/hotspot/normal/eclipse" \
+              | tar -xz -C "$HOME/temurin21" --strip-components=1
+            echo "export JAVA_HOME=\"$HOME/temurin21\"" >> "$BASH_ENV"
       - zap/install:
           install_path: $HOME/tools/zap
       - run:
@@ -476,7 +484,7 @@ Linux executors, Docker or machine. ZAP's Linux release is one Java archive for 
 The executor needs:
 - A Java runtime compatible with the ZAP version. See [ZAP and Java Versions](#-zap-and-java-versions).
 - bash 4 or newer. Images with only `/bin/sh`, and macOS's bash 3, are refused with a clear error.
-- `mktemp`, `tar`, `gzip`, `sha512sum` (only when verifying), and either `curl` or `wget`. `cimg/openjdk` has them all; on UBI images, see [Red Hat UBI Images](#-red-hat-ubi-images).
+- `mktemp`, `tar`, `gzip`, `sort`, `cut`, `sha512sum` (only when verifying), and either `curl` or `wget`. `cimg/openjdk` has them all; on UBI images, see [Red Hat UBI Images](#-red-hat-ubi-images).
 
 Images that run as root without `/home/circleci`, such as `eclipse-temurin`, work too: the default paths follow `$HOME`. Without the CircleCI CLI on the image, parameter values are used as written, without environment variable expansion.
 
@@ -545,7 +553,7 @@ This is an unofficial, community-maintained orb, and contributions are welcome! 
 
 - **Found a bug or have an idea?** [Open an issue](https://github.com/juburr/zap-scanner-orb/issues).
 - **Need a newer ZAP release?** Generate its checksum with `src/scripts/install_hash.sh -v <version>`, paste it into the `sha512sums` table in [`src/scripts/install.sh`](src/scripts/install.sh), and open a pull request. The script checks the release archive against the SHA-256 checksum ZAP publishes in the GitHub release notes; see [Adding a New ZAP Version](#adding-a-new-zap-version) for the rest of the checklist.
-- **Before opening a pull request**, run the checks CI runs first. These run offline; the install and scan script tests under [Testing](#testing) need Java.
+- **Before opening a pull request**, run the checks CI runs first. The tests run offline, and the install and scan script tests under [Testing](#testing) need Java; `circleci orb validate` checks the packed orb against the CircleCI API, so it needs network access.
 
   ```bash
   yamllint .
