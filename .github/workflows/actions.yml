@@ -1,0 +1,335 @@
+# Tests the GitHub Actions in actions/ on GitHub's own runners, as
+# .circleci/test-deploy.yml tests the orb's commands on CircleCI. Each job
+# runs the actions from this checkout (uses: ./actions/...), so a pull
+# request tests its own changes. The Red Hat UBI and older Java and ZAP
+# matrices stay on CircleCI, since the actions run the same scripts.
+name: GitHub Actions
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  offline-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run the offline tests
+        run: |
+          for test in actions_test.sh install_test.sh env_subst_tests.sh shell_conventions_test.sh; do
+            echo "=== ${test}"
+            bash ".circleci/scripts/${test}"
+          done
+
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: ./actions/install
+      - name: Verify the install
+        run: |
+          version=$(grep -A3 '^  version:' src/commands/install.yml | sed -n 's/^    default: "\(.*\)"$/\1/p')
+          [[ "$(command -v zap.sh)" == "${HOME}/bin/zap.sh" ]]
+          [[ "$(readlink "${HOME}/bin/zap.sh")" == "${HOME}/zap/zap.sh" ]]
+          test -f "${HOME}/zap/zap-${version}.jar"
+          grep -qx "version=${version}" "${HOME}/zap/.zap-scanner-orb"
+          # Exported by install through run_script.sh and GITHUB_ENV.
+          [[ "${ZAP_INSTALL_PATH}" == "${HOME}/zap" ]]
+          [[ "${ZAP_VERSION}" == "${version}" ]]
+          zap.sh -cmd -version | tee "${RUNNER_TEMP}/version.log"
+          [[ "$(tail -n 1 "${RUNNER_TEMP}/version.log")" == "${version}" ]]
+      # The first install saved the release to the cache, so this one restores
+      # it. It goes to directories of their own with spaces in their names,
+      # and later steps find its zap.sh first on the PATH.
+      - uses: ./actions/install
+        with:
+          install_path: ${{ runner.temp }}/zap tools/zap
+          bin_path: ${{ runner.temp }}/zap tools/bin
+      - name: Verify the second install comes first on the PATH
+        env:
+          SECOND: ${{ runner.temp }}/zap tools
+        run: |
+          [[ "$(command -v zap.sh)" == "${SECOND}/bin/zap.sh" ]]
+          [[ "$(readlink "${SECOND}/bin/zap.sh")" == "${SECOND}/zap/zap.sh" ]]
+          [[ "${ZAP_INSTALL_PATH}" == "${SECOND}/zap" ]]
+      - name: Install an unlisted version, which must fail
+        id: unlisted
+        continue-on-error: true
+        uses: ./actions/install
+        with:
+          version: 0.0.1
+          caching: false
+          install_path: ${{ runner.temp }}/unlisted/zap
+          bin_path: ${{ runner.temp }}/unlisted/bin
+      - name: Verify it failed before installing anything
+        env:
+          OUTCOME: ${{ steps.unlisted.outcome }}
+          UNLISTED: ${{ runner.temp }}/unlisted
+        run: |
+          [[ "${OUTCOME}" == failure ]]
+          [[ ! -e "${UNLISTED}/zap/zap.sh" && ! -e "${UNLISTED}/bin/zap.sh" ]]
+
+  # A fresh runner with the release's download hosts blocked installs from
+  # the cache the install job saved, which only works if the cache is used.
+  install-from-cache:
+    needs: install
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Block the download hosts
+        run: |
+          echo "127.0.0.1 github.com objects.githubusercontent.com release-assets.githubusercontent.com" | sudo tee -a /etc/hosts
+          if curl -sSf --max-time 10 -o /dev/null https://github.com; then
+            echo "github.com is still reachable."
+            exit 1
+          fi
+      - uses: ./actions/install
+      - name: Verify the install
+        run: |
+          version=$(grep -A3 '^  version:' src/commands/install.yml | sed -n 's/^    default: "\(.*\)"$/\1/p')
+          [[ "$(zap.sh -cmd -version | tail -n 1)" == "${version}" ]]
+
+  # Scans an nginx service container, which must pass at fail_on high and
+  # leave a complete set of reports behind, as test-deploy.yml's scan-docker.
+  scan:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - scan_type: baseline
+            report_pattern: Missing Anti-clickjacking Header
+          - scan_type: full
+            report_pattern: Missing Anti-clickjacking Header
+          # The definition's only server is the relative "/", which ZAP can't
+          # import from a file on its own. Its operations must be scanned on
+          # the target.
+          - scan_type: api
+            api_definition: .circleci/zap/openapi-relative-server.json
+            report_pattern: http://localhost/api/items
+    runs-on: ubuntu-24.04
+    services:
+      nginx:
+        image: nginx:stable-alpine
+        ports: ["80:80"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: ./actions/install
+      - uses: ./actions/scan
+        with:
+          target: http://localhost/
+          scan_type: ${{ matrix.scan_type }}
+          api_definition: ${{ matrix.api_definition }}
+          fail_on: high
+          active_scan_minutes: 3
+      - name: Verify the reports
+        env:
+          REPORT_PATTERN: ${{ matrix.report_pattern }}
+        run: |
+          for report in report.html report.json report.md plan.yaml zap.log; do
+            test -s "/tmp/zap-reports/${report}" || { echo "missing ${report}"; exit 1; }
+          done
+          grep -qF "${REPORT_PATTERN}" /tmp/zap-reports/report.json \
+            || { echo "report.json lacks '${REPORT_PATTERN}'"; exit 1; }
+          grep -qF -- "- 'http://localhost/'" /tmp/zap-reports/plan.yaml \
+            || { echo "plan.yaml does not target http://localhost/"; exit 1; }
+          test ! -e "${HOME}/.ZAP" || { echo "the scan created ${HOME}/.ZAP"; exit 1; }
+
+  # An nginx that only serves its pages, including a link to /members/, to
+  # requests carrying the right X-Api-Key header. The authenticated scan must
+  # reach /members/, while scans without the header, or with the header
+  # restricted to another site, must not. The header value comes from the
+  # environment, as a secret would.
+  scan-auth-header:
+    runs-on: ubuntu-24.04
+    env:
+      SCAN_TOKEN: ci-test-token
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+      # A service container can't be given a configuration file, so nginx
+      # runs from a step.
+      - name: Start an nginx that requires the header
+        run: |
+          mkdir -p "${RUNNER_TEMP}/nginx"
+          cat > "${RUNNER_TEMP}/nginx/default.conf" << 'EOF'
+          server {
+              listen 80;
+              default_type text/html;
+              location = / {
+                  if ($http_x_api_key != "ci-test-token") { return 401; }
+                  return 200 '<html><body><a href="/members/">Members</a></body></html>';
+              }
+              location = /members/ {
+                  if ($http_x_api_key != "ci-test-token") { return 401; }
+                  return 200 '<html><body>Members only</body></html>';
+              }
+          }
+          EOF
+          docker run -d --name nginx -p 80:80 -v "${RUNNER_TEMP}/nginx:/etc/nginx/conf.d:ro" nginx:stable-alpine
+      - uses: ./actions/install
+      - uses: ./actions/scan
+        with:
+          target: http://localhost/
+          auth_header: X-Api-Key
+          auth_header_value: SCAN_TOKEN
+          fail_on: never
+          output_dir: /tmp/zap-authenticated
+      - uses: ./actions/scan
+        with:
+          target: http://localhost/
+          fail_on: never
+          output_dir: /tmp/zap-unauthenticated
+          store_artifacts: false
+      - uses: ./actions/scan
+        with:
+          target: http://127.0.0.1/
+          auth_header: X-Api-Key
+          auth_header_value: SCAN_TOKEN
+          auth_header_site: localhost
+          fail_on: never
+          output_dir: /tmp/zap-other-site
+          store_artifacts: false
+      - name: Verify the header was sent only where expected
+        run: |
+          grep -qF "http://localhost/members/" /tmp/zap-authenticated/report.json \
+            || { echo "the authenticated scan did not reach /members/"; exit 1; }
+          if grep -qF "/members/" /tmp/zap-unauthenticated/report.json; then
+            echo "the unauthenticated scan reached /members/"; exit 1
+          fi
+          if grep -qF "/members/" /tmp/zap-other-site/report.json; then
+            echo "the header was sent to a site other than auth_header_site"; exit 1
+          fi
+          if grep -rqF "${SCAN_TOKEN}" /tmp/zap-authenticated /tmp/zap-unauthenticated /tmp/zap-other-site; then
+            echo "the header value was written to the reports, plan, or log"; exit 1
+          fi
+
+  # Scans at fail_on medium while ignoring the only two medium risk rules
+  # nginx raises. The scan must pass, with those alerts absent from every
+  # report and the low risk alerts still present.
+  scan-ignore-rules:
+    runs-on: ubuntu-24.04
+    services:
+      nginx:
+        image: nginx:stable-alpine
+        ports: ["80:80"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: ./actions/install
+      - uses: ./actions/scan
+        with:
+          target: http://localhost/
+          fail_on: medium
+          # Missing Anti-clickjacking Header and CSP Header Not Set.
+          ignore_rules: "10020, 10038"
+      - name: Verify the ignored alerts are left out
+        run: |
+          grep -qF "type: alertFilter" /tmp/zap-reports/plan.yaml || { echo "plan has no alertFilter job"; exit 1; }
+          for report in report.json report.html report.md; do
+            for alert in "Missing Anti-clickjacking Header" "Content Security Policy (CSP) Header Not Set"; do
+              if grep -qF "${alert}" "/tmp/zap-reports/${report}"; then
+                echo "${report} still contains the ignored alert '${alert}'"; exit 1
+              fi
+            done
+          done
+          grep -qF "X-Content-Type-Options Header Missing" /tmp/zap-reports/report.json \
+            || { echo "report.json lost an alert that was not ignored"; exit 1; }
+
+  # Runs a custom Automation Framework plan, writing reports to a directory
+  # with spaces in its name without uploading them.
+  scan-custom-plan:
+    runs-on: ubuntu-24.04
+    services:
+      nginx:
+        image: nginx:stable-alpine
+        ports: ["80:80"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: ./actions/install
+      - uses: ./actions/scan
+        with:
+          plan: .circleci/zap/custom-plan.yaml
+          target: http://localhost/
+          output_dir: /tmp/custom zap reports
+          store_artifacts: false
+          max_memory: 768m
+      - name: Verify the plan's report
+        run: |
+          test -s "/tmp/custom zap reports/custom.json"
+          test -s "/tmp/custom zap reports/zap.log"
+          test ! -e "/tmp/custom zap reports/plan.yaml"
+          test ! -e /tmp/zap-reports
+
+  # The scan script's own tests, including real scans of each type, with no
+  # CircleCI CLI on the runner.
+  scan-script-tests:
+    runs-on: ubuntu-24.04
+    services:
+      nginx:
+        image: nginx:stable-alpine
+        ports: ["80:80"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: ./actions/install
+      - name: Run the scan script tests
+        run: SCAN_TARGET=http://localhost/ bash .circleci/scripts/scan_script_tests.sh

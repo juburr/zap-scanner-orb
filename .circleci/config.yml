@@ -33,6 +33,14 @@ jobs:
       - run:
           name: Run shell conventions tests
           command: bash .circleci/scripts/shell_conventions_test.sh
+  test-actions:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - run:
+          name: Check the GitHub Actions against the orb's commands
+          command: bash .circleci/scripts/actions_test.sh
 
 workflows:
   lint-pack:
@@ -42,6 +50,8 @@ workflows:
       - test-env-subst:
           filters: *filters
       - test-shell-conventions:
+          filters: *filters
+      - test-actions:
           filters: *filters
       - orb-tools/lint:
           filters: *filters
@@ -57,5 +67,5 @@ workflows:
           pipeline_number: << pipeline.number >>
           vcs_type: << pipeline.project.type >>
           orb_name: zap-scanner-orb
-          requires: [test-install, test-env-subst, test-shell-conventions, orb-tools/lint, orb-tools/pack, orb-tools/review, shellcheck/check]
+          requires: [test-install, test-env-subst, test-shell-conventions, test-actions, orb-tools/lint, orb-tools/pack, orb-tools/review, shellcheck/check]
           filters: *filters
