@@ -693,5 +693,5 @@ Need the logo for a slide deck, blog post, or internal developer portal? PNGs wi
   <br>
   <sub>Catch it in CI, not in an incident report. If this orb helps your team, a ⭐ helps others find it.</sub>
   <br>
-  <sub><a href="#zap-scanner-orb-for-circleci">Back to top ↑</a></sub>
+  <sub><a href="#zap-scanner-for-circleci-and-github-actions">Back to top ↑</a></sub>
 </div>
