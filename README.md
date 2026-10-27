@@ -2,28 +2,30 @@
 
 <img src="assets/logos/zap-scanner-orb-512px.png" width="256" alt="ZAP Scanner Orb logo: a white robot with glowing blue eyes firing lightning bolts at a code window, on a dark blue badge reading Headless DAST Scanning on CircleCI">
 
-# ZAP Scanner Orb for CircleCI
+# ZAP Scanner for CircleCI and GitHub Actions
 
 ### Scan your running web app or API for vulnerabilities on every push.
 
 Install [ZAP](https://www.zaproxy.org/), point it at the app your job starts, and fail the build at the risk level you choose<br>
-with two steps of CircleCI config.<br>
+with two steps of CircleCI config, or two GitHub Actions.<br>
 Strict SHA-512 verification by default · No `sudo` · Reports stored even when the scan fails
 
 [![CircleCI Build Status](https://circleci.com/gh/juburr/zap-scanner-orb.svg?style=shield "CircleCI Build Status")](https://circleci.com/gh/juburr/zap-scanner-orb)
+[![GitHub Actions Status](https://github.com/juburr/zap-scanner-orb/actions/workflows/actions.yml/badge.svg?branch=main "GitHub Actions Status")](https://github.com/juburr/zap-scanner-orb/actions/workflows/actions.yml)
 [![CircleCI Orb Version](https://badges.circleci.com/orbs/juburr/zap-scanner-orb.svg)](https://circleci.com/developer/orbs/orb/juburr/zap-scanner-orb)
 [![GitHub License](https://img.shields.io/badge/license-MIT-lightgrey.svg)](LICENSE)
 [![CircleCI Community](https://img.shields.io/badge/community-CircleCI%20Discuss-343434.svg)](https://discuss.circleci.com/c/ecosystem/orbs)
 
+![CircleCI orb and GitHub Actions](https://img.shields.io/badge/CI-CircleCI%20%7C%20GitHub%20Actions-F97316?style=for-the-badge)
 ![Baseline, full and API scans](https://img.shields.io/badge/scans-baseline%20%7C%20full%20%7C%20API-0A2540?style=for-the-badge&logoColor=white)
 ![Tested on amd64 and arm64](https://img.shields.io/badge/arch-amd64%20%7C%20arm64-005B96?style=for-the-badge&logo=linux&logoColor=white)
 ![Tested on Red Hat UBI 8 and 9](https://img.shields.io/badge/Red%20Hat%20UBI-8%20%7C%209-0077B6?style=for-the-badge&logo=redhat&logoColor=white)
 ![SHA-512 verified by default](https://img.shields.io/badge/SHA--512-strict%20by%20default-0891B2?style=for-the-badge&logoColor=white)
 ![No sudo required](https://img.shields.io/badge/sudo-not%20required-00A6D6?style=for-the-badge&logoColor=white)
 
-**[Quick Start](#-quick-start)** · **[Features](#-why-zap-scanner-orb)** · **[Recipes](#-recipes)** · **[Red Hat UBI](#-red-hat-ubi-images)** · **[Commands](#-commands)** · **[Security](#-secure-by-design)** · **[Troubleshooting](#-troubleshooting)**
+**[Quick Start](#-quick-start)** · **[Features](#-why-zap-scanner-orb)** · **[Recipes](#-recipes)** · **[Red Hat UBI](#-red-hat-ubi-images)** · **[CircleCI Commands](#-circleci-commands)** · **[GitHub Actions](#-github-actions)** · **[Security](#-secure-by-design)** · **[Troubleshooting](#-troubleshooting)**
 
-<sub>An unofficial, community-maintained orb. [Contributions are welcome!](#-contributing)</sub>
+<sub>An unofficial, community-maintained CircleCI orb and set of GitHub Actions. [Contributions are welcome!](#-contributing)</sub>
 
 </div>
 
@@ -57,7 +59,7 @@ Every ZAP release the ZAP project still hosts is pinned to a SHA-512 anchored to
 </td>
 <td width="33%" valign="top">
 🧪 <b>Tested on the images you use</b><br><br>
-CI installs and scans on <code>cimg/openjdk</code>, <a href="#-red-hat-ubi-images">Red Hat UBI 8 and 9</a> (including <code>ubi-minimal</code> and the OpenJDK images), machine executors, and amd64 and arm64 resource classes.
+CI installs and scans on <code>cimg/openjdk</code>, <a href="#-red-hat-ubi-images">Red Hat UBI 8 and 9</a> (including <code>ubi-minimal</code> and the OpenJDK images), machine executors, amd64 and arm64 resource classes, and GitHub's amd64 and arm64 runners.
 </td>
 </tr>
 </table>
@@ -102,13 +104,13 @@ flowchart LR
 
 ## 🚀 Quick Start
 
-Start your app as a service container, install ZAP, scan. Copy this into `.circleci/config.yml`:
+Start your app as a service container, install ZAP, scan. On CircleCI, add the orb to `.circleci/config.yml`:
 
 ```yaml
 version: 2.1
 
 orbs:
-  zap: juburr/zap-scanner-orb@1.0.0
+  zap: juburr/zap-scanner-orb@1.1.0
 
 jobs:
   dast:
@@ -130,7 +132,34 @@ workflows:
       - dast
 ```
 
-Swap in your own app image and port, push, and the scan waits for the application to respond, spiders it, and fails the job if any passive scan alert is medium risk or higher. The HTML, JSON and Markdown reports are stored under `zap-reports/` in the job's **Artifacts** tab whether the scan passes or fails. Any Linux executor with Java and the tools listed under [Supported Platforms](#-supported-platforms) works; see [ZAP and Java Versions](#-zap-and-java-versions) for the Java each ZAP release needs, and [Red Hat UBI Images](#-red-hat-ubi-images) for images that don't include Java.
+On GitHub Actions, use the `install` and `scan` actions in a workflow, such as `.github/workflows/dast.yml`. GitHub's `ubuntu-24.04` runner includes Java:
+
+```yaml
+name: DAST
+
+on: push
+
+jobs:
+  dast:
+    runs-on: ubuntu-24.04
+    services:
+      # The application under test, reachable at localhost.
+      juice-shop:
+        image: bkimminich/juice-shop:latest
+        ports: ["3000:3000"]
+    steps:
+      - uses: juburr/zap-scanner-orb/actions/install@v1.1.0
+        with:
+          version: "2.17.0"
+      - uses: juburr/zap-scanner-orb/actions/scan@v1.1.0
+        with:
+          target: http://localhost:3000
+          fail_on: medium
+```
+
+See [GitHub Actions](#-github-actions) for how the actions map to the orb's commands.
+
+Swap in your own app image and port, push, and the scan waits for the application to respond, spiders it, and fails the job if any passive scan alert is medium risk or higher. The HTML, JSON and Markdown reports are stored under `zap-reports/` in the job's **Artifacts** tab (on GitHub, a `zap-reports-…` artifact of the run) whether the scan passes or fails. Any Linux executor with Java and the tools listed under [Supported Platforms](#-supported-platforms) works; see [ZAP and Java Versions](#-zap-and-java-versions) for the Java each ZAP release needs, and [Red Hat UBI Images](#-red-hat-ubi-images) for images that don't include Java.
 
 > [!TIP]
 > Upgrading from `report_dir`, `extra_options` or `wait_for_target`? v1.0.0 renames them. See [Upgrading](#-upgrading).
@@ -399,7 +428,7 @@ Earlier releases ignore `JAVA_HOME`, so switch the system default instead, as ro
 alternatives --set java "$(readlink -f /usr/lib/jvm/jre-21/bin/java)"
 ```
 
-## 🧰 Commands
+## 🧰 CircleCI Commands
 
 ### `zap/install`
 
@@ -447,6 +476,38 @@ Runs a headless scan with ZAP's [Automation Framework](https://www.zaproxy.org/d
 
 Environment variables are expanded in `target`, `api_definition`, `plan`, `auth_header`, `auth_header_site` and `extra_args`. `output_dir` is passed to `store_artifacts` as is, so it must be a literal path.
 
+## ⚡ GitHub Actions
+
+Each of the orb's commands has a GitHub Action of the same name. The actions run the same scripts as the orb, so they install, verify and scan the same way, and take the same inputs with the same defaults.
+
+| Action | Orb command | Inputs |
+| --- | --- | --- |
+| `juburr/zap-scanner-orb/actions/install` | [`zap/install`](#zapinstall) | `version`, `install_path`, `bin_path`, `verify_checksums`, `caching` |
+| `juburr/zap-scanner-orb/actions/scan` | [`zap/scan`](#zapscan) | Every `scan` parameter, with the same defaults |
+
+The [Quick Start](#-quick-start) shows a complete workflow. How they differ from the orb's commands:
+
+- **Versions.** An action is referenced by the repository's release tag, such as `v1.1.0`, the same tag the orb is published from. There is no moving major tag such as `v1` yet. For the strongest pinning, use the tag's commit SHA: `juburr/zap-scanner-orb/actions/scan@<sha> # v1.1.0`.
+- **Environment variables.** The orb expands `$NAME` in its string parameters with the CircleCI CLI, which GitHub's runners don't have, so the actions take values as they are. Use GitHub's expressions instead, such as `target: http://localhost:${{ env.APP_PORT }}`. A leading `~` in `install_path` and `bin_path` is still the home directory.
+- **Authenticated scans.** `auth_header_value` still takes the *name* of an environment variable. Set that variable from a secret in the step's `env`:
+
+  ```yaml
+      - uses: juburr/zap-scanner-orb/actions/scan@v1.1.0
+        env:
+          ZAP_AUTH_HEADER_VALUE: Bearer ${{ secrets.API_TOKEN }}
+        with:
+          target: http://localhost:8080
+  ```
+
+- **Reports.** With `store_artifacts`, the action uploads `output_dir` with [`actions/upload-artifact`](https://github.com/actions/upload-artifact) as an artifact named `zap-reports-` plus a random suffix, so several scans in one run don't collide, including when the scan fails.
+- **`no_output_timeout`** has no effect on GitHub Actions. Give the scan step `timeout-minutes` instead.
+- **Java.** GitHub's `ubuntu-24.04` runner includes Java 17, which ZAP 2.17.0 needs. On other runners, or for another Java, use [`actions/setup-java`](https://github.com/actions/setup-java) before `install`, as CI does; ZAP 2.17.0 and newer honor the `JAVA_HOME` it sets.
+- **Caching.** `caching` stores the verified release archive with [`actions/cache`](https://github.com/actions/cache), with the same key ingredients as the orb (ZAP version, CPU architecture, home directory). The cache is restored before the install and saved right after it, and the archive is verified again when restored. It counts toward the repository's GitHub Actions cache storage.
+- **`PATH` and exports.** `install` puts `bin_path` on the `PATH` of later steps through `GITHUB_PATH`, and exports `ZAP_INSTALL_PATH` and `ZAP_VERSION` through `GITHUB_ENV`.
+- **Runners.** CI installs on `ubuntu-24.04` and `ubuntu-24.04-arm`, and runs baseline, full, api, authenticated, ignore-rules and custom plan scans of nginx containers on `ubuntu-24.04`, plus the scan script's own tests.
+
+The actions are composite actions in [`actions/`](actions), next to the orb's source. Each passes its inputs to the orb's script as environment variables, and [`actions/run_script.sh`](actions/run_script.sh) gives the script what CircleCI would: a `BASH_ENV` file for the values it hands to later steps, which it then passes on through `GITHUB_PATH` and `GITHUB_ENV`.
+
 ## 📦 Upgrading
 
 v1.0.0 renames three `scan` parameters. Update your config as follows:
@@ -470,7 +531,7 @@ Behavior changes:
 - **Least Privilege**: Installs to user-owned directories by default, with no `sudo` usage anywhere in this orb.
 - **Integrity**: Checksum validation of all downloaded release archives using SHA-512, anchored to the checksums ZAP publishes with each release. Versions without a pinned checksum fail closed by default, cached archives are re-verified on every restore, and a failed install never leaves a partly extracted directory. See [Checksum Verification](#-checksum-verification).
 - **Provenance**: Installs directly from ZAP's official [releases page](https://github.com/zaproxy/zaproxy/releases/) on GitHub, or from the ZAP project's [zap-archive](https://github.com/zaproxy/zap-archive/releases) for older releases it has moved there. No third-party websites, domains, or proxies are used.
-- **Confidentiality**: All secrets and environment variables are handled in accordance with CircleCI's [security recommendations](https://circleci.com/docs/security-recommendations/) and [best practices](https://circleci.com/docs/orbs-best-practices/). `auth_header_value` takes the *name* of an environment variable, and the value is never printed (even when the job traces its steps), never written to the plan, the reports or the log, and never put on ZAP's command line.
+- **Confidentiality**: All secrets and environment variables are handled in accordance with CircleCI's [security recommendations](https://circleci.com/docs/security-recommendations/) and [best practices](https://circleci.com/docs/orbs-best-practices/). `auth_header_value` takes the *name* of an environment variable, and the value is never printed (even when the job traces its steps), never written to the plan, the reports or the log, and never put on ZAP's command line. On GitHub Actions, the shared `actions/run_script.sh` also snapshots the step's environment, the header value included, into its own private temporary directory to find what the script exported, and removes it when the step ends. The actions pass inputs to the scripts as environment variables, never pasting them into a script, and pin the actions they use to a commit SHA.
 - **Isolation**: Each scan runs ZAP with a fresh temporary home directory, removed when the step exits, and sends the authentication header only to `auth_header_site`.
 - **Privacy**: No usage data of any kind is collected or shipped back to the orb developer. Scans run ZAP with `-silent`, so ZAP itself makes no unsolicited requests, such as update checks or telemetry, to its own services.
 
@@ -489,6 +550,8 @@ The executor needs:
 Images that run as root without `/home/circleci`, such as `eclipse-temurin`, work too: the default paths follow `$HOME`. Without the CircleCI CLI on the image, parameter values are used as written, without environment variable expansion.
 
 The archive is cached under `~/.cache/zap-scanner-orb`, with a key made of the version, the CPU architecture (`uname -m`) and the home directory (`zap-scanner-orb-v1-<version>-…`), since a cache is restored to the absolute path it was saved from. Only verified archives are cached, and a restored archive is verified again before it is used. If a cached archive no longer matches its checksum, it is discarded and downloaded again rather than failing the build. On executors whose `PATH` doesn't already include `bin_path` (for example, machine executors), `install` adds it for later steps through `BASH_ENV`.
+
+The [GitHub Actions](#-github-actions) run on GitHub-hosted `ubuntu-24.04` (amd64) and `ubuntu-24.04-arm` (arm64) runners, which CI covers, and on self-hosted Linux runners with the same tools and Java.
 
 ## 🔐 Checksum Verification
 
@@ -521,6 +584,8 @@ Hosts to allow (HTTPS, port 443) when running on a locked-down or self-hosted ru
 
 Scans only contact the target, plus the `api_definition` URL if one is given. They run ZAP with `-silent`, so ZAP makes no update checks or telemetry requests, and every add-on the generated plans use is bundled with the ZAP release, so nothing is downloaded at scan time. A custom plan reaches whatever hosts it names. Installing Java or other prerequisites in your own steps, such as with `dnf` on UBI, needs access to those package repositories.
 
+On GitHub Actions, `caching` also reaches GitHub's cache service through `actions/cache`, and `store_artifacts` its artifact storage through `actions/upload-artifact`. GitHub-hosted runners always can; a self-hosted runner needs the hosts GitHub lists for [communication with GitHub](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/about-self-hosted-runners#communication-between-self-hosted-runners-and-github).
+
 ## 🩺 Troubleshooting
 
 | Error | Resolution |
@@ -539,13 +604,13 @@ Scans only contact the target, plus the `api_definition` URL if one is given. Th
 | `zap.sh was not found on the PATH` | Run `install` earlier in the same job as `scan`. |
 | `Scanning requires ZAP 2.12.0 or newer` | Install ZAP 2.12.0 or newer in the scanning job. |
 | `... did not respond within ...s` | Check that the application started and listens on the `target` host and port, or raise `wait_for_target_seconds`. |
-| `auth_header_value names $..., which is unset or empty` | Attach the context that defines the variable to the job, or check its name. |
+| `auth_header_value names $..., which is unset or empty` | Attach the context that defines the variable to the job, or check its name. On GitHub Actions, set the variable from a secret in the scan step's `env`. |
 | Authenticated pages are missing from the reports | Check that `auth_header_site` matches the host in `target`, and that the token hasn't expired. |
 | `alert type(s) at or above fail_on` | Review `report.html` in the job's artifacts, then fix the findings, add false positives to `ignore_rules`, or raise `fail_on`. |
 | `Invalid rule '...' in ignore_rules` | Use numeric rule IDs such as `10020`. For alert references such as `10038-1`, use an `alertFilter` job in a custom plan. |
 | `ZAP scan failed (exit code 1)` | Look for "Automation plan failures" in the output. The target may be unreachable. |
 | ZAP is killed, or runs out of memory | Raise `max_memory`, or use a larger `resource_class`. |
-| `Too long with no output` | Raise `no_output_timeout`, or lower `active_scan_minutes`. |
+| `Too long with no output` | Raise `no_output_timeout`, or lower `active_scan_minutes`. On GitHub Actions, the job's or step's `timeout-minutes` applies instead. |
 
 ## 🤝 Contributing
 
@@ -561,6 +626,7 @@ This is an unofficial, community-maintained orb, and contributions are welcome! 
   bash .circleci/scripts/install_test.sh
   bash .circleci/scripts/env_subst_tests.sh
   bash .circleci/scripts/shell_conventions_test.sh
+  bash .circleci/scripts/actions_test.sh
   circleci orb pack src > orb.yml && circleci orb validate orb.yml
   ```
 
@@ -582,7 +648,7 @@ CI fails if any of these are missing or disagree.
 
 ### Testing
 
-The `lint-pack` workflow in `.circleci/config.yml` runs orb-tools' lint, pack and review, shellcheck, and three offline tests: the install contract test shared by the juburr orbs (`install_test.sh`), the check that scripts pass parameter values to `circleci env subst` on stdin (`env_subst_tests.sh`), and the shared shell conventions check (`shell_conventions_test.sh`).
+The `lint-pack` workflow in `.circleci/config.yml` runs orb-tools' lint, pack and review, shellcheck, and four offline tests: the install contract test shared by the juburr orbs (`install_test.sh`), the check that scripts pass parameter values to `circleci env subst` on stdin (`env_subst_tests.sh`), the shared shell conventions check (`shell_conventions_test.sh`), and the check that each GitHub Action matches its command (`actions_test.sh`): a change to a command's parameters needs the same change to its action in `actions/`.
 
 Every push then runs the following in `.circleci/test-deploy.yml`, and publishing requires all of them to pass:
 
@@ -600,6 +666,8 @@ Every push then runs the following in `.circleci/test-deploy.yml`, and publishin
 - Baseline scans that ignore nginx's medium risk alerts with `ignore_rules`, on ZAP 2.17.0 and 2.12.0, which must pass at `fail_on: medium` with those alerts absent from every report.
 - `.circleci/scripts/scan_script_tests.sh`, which runs the scan script against a fake `zap.sh` to cover validation, plan generation, and result handling, then runs real scans of each type. One imports a definition by URL from a second host, which must receive nothing but the request for the definition.
 - Both test scripts again, on UBI 8 with its own OpenJDK package.
+
+The GitHub workflow ([`.github/workflows/actions.yml`](.github/workflows/actions.yml)) runs the actions on GitHub's runners: installs on amd64 and arm64, one from the cache with the download hosts blocked, the same scans of nginx containers, and the scan script tests.
 
 The install and scan script tests can also be run locally with Java 17+ on the `PATH`:
 
