@@ -8,7 +8,7 @@ description: >
 usage:
   version: 2.1
   orbs:
-    zap-scanner-orb: juburr/zap-scanner-orb@1.1.0
+    zap-scanner-orb: juburr/zap-scanner-orb@1.1.1
   jobs:
     dast:
       machine:
