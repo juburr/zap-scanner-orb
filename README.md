@@ -110,7 +110,7 @@ Start your app as a service container, install ZAP, scan. On CircleCI, add the o
 version: 2.1
 
 orbs:
-  zap: juburr/zap-scanner-orb@1.1.1
+  zap: juburr/zap-scanner-orb@1.1.2
 
 jobs:
   dast:
@@ -148,10 +148,10 @@ jobs:
         image: bkimminich/juice-shop:latest
         ports: ["3000:3000"]
     steps:
-      - uses: juburr/zap-scanner-orb/actions/install@v1.1.1
+      - uses: juburr/zap-scanner-orb/actions/install@v1.1.2
         with:
           version: "2.17.0"
-      - uses: juburr/zap-scanner-orb/actions/scan@v1.1.1
+      - uses: juburr/zap-scanner-orb/actions/scan@v1.1.2
         with:
           target: http://localhost:3000
           fail_on: medium
@@ -487,12 +487,12 @@ Each of the orb's commands has a GitHub Action of the same name. The actions run
 
 The [Quick Start](#-quick-start) shows a complete workflow. How they differ from the orb's commands:
 
-- **Versions.** An action is referenced by the repository's release tag, such as `v1.1.1`, the same tag the orb is published from. There is no moving major tag such as `v1` yet. For the strongest pinning, use the tag's commit SHA: `juburr/zap-scanner-orb/actions/scan@<sha> # v1.1.1`.
+- **Versions.** An action is referenced by the repository's release tag, such as `v1.1.2`, the same tag the orb is published from. There is no moving major tag such as `v1` yet. For the strongest pinning, use the tag's commit SHA: `juburr/zap-scanner-orb/actions/scan@<sha> # v1.1.1`.
 - **Environment variables.** The orb expands `$NAME` in its string parameters with the CircleCI CLI, which GitHub's runners don't have, so the actions take values as they are. Use GitHub's expressions instead, such as `target: http://localhost:${{ env.APP_PORT }}`. A leading `~` in `install_path` and `bin_path` is still the home directory.
 - **Authenticated scans.** `auth_header_value` still takes the *name* of an environment variable. Set that variable from a secret in the step's `env`:
 
   ```yaml
-      - uses: juburr/zap-scanner-orb/actions/scan@v1.1.1
+      - uses: juburr/zap-scanner-orb/actions/scan@v1.1.2
         env:
           ZAP_AUTH_HEADER_VALUE: Bearer ${{ secrets.API_TOKEN }}
         with:
